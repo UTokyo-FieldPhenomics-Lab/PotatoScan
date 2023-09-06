@@ -1,7 +1,7 @@
 # @Author: Pieter Blok
 # @Date:   2021-03-26 14:30:31
 # @Last Modified by:   Pieter Blok
-# @Last Modified time: 2023-03-17 12:36:09
+# @Last Modified time: 2023-09-06 14:05:56
 
 import random
 import os
@@ -17,6 +17,40 @@ from tqdm import tqdm
 import itertools
 
 supported_cv2_formats = (".bmp", ".dib", ".jpeg", ".jpg", ".jpe", ".jp2", ".png", ".pbm", ".pgm", ".ppm", ".sr", ".ras", ".tiff", ".tif")
+
+
+def list_files(rootdir, img_separator):
+    images = []
+    annotations = []
+
+    if os.path.isdir(rootdir):
+        for root, dirs, files in list(os.walk(rootdir)):
+            for name in files:
+                subdir = root.split(rootdir)
+                all('' == s for s in subdir)
+                
+                if subdir[1].startswith('/'):
+                    subdirname = subdir[1][1:]
+                else:
+                    subdirname = subdir[1]
+
+                if name.lower().endswith(supported_cv2_formats) and img_separator in name:
+                    if all('' == s for s in subdir):
+                        images.append(name)
+                    else:
+                        images.append(os.path.join(subdirname, name))
+
+                if name.endswith(".json") or name.endswith(".xml"):
+                    if all('' == s for s in subdir):
+                        annotations.append(name)
+                    else:
+                        annotations.append(os.path.join(subdirname, name))
+    
+        images.sort()
+        annotations.sort()
+
+    return images, annotations
+
 
 def find_valid_images_and_annotations(rootdir):
     image_annotation_pairs = []
@@ -473,6 +507,161 @@ def create_json(rootdir, img_annot, classes, name):
             
     with open(os.path.join(rootdir, output_file), 'w') as outfile:
         json.dump(writedata, outfile)
+
+
+def write_labelme_annotations(write_dir, basename, class_names, masks, height, width):
+    masks = masks.astype(np.uint8)
+
+    if masks.any():
+        writedata = {}
+        writedata['version'] = "5.2.1"
+        writedata['flags'] = {}
+        writedata['shapes'] = []
+        writename = basename
+
+        md, mh, mw = masks.shape
+        maskstransposed = masks.transpose(1,2,0) # transform the mask in the same format as the input image array (h,w,num_dets)
+        useful_masks = False
+
+        for i in range (maskstransposed.shape[-1]):
+            groupid = 1
+            masksel = maskstransposed[:,:,i] # select the individual masks
+            class_name = class_names[i]
+            contours_unfiltered, hierarchy = cv2.findContours((masksel*255).astype(np.uint8),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            contours = []
+            for cnts in range(len(contours_unfiltered)):
+                area = cv2.contourArea(contours_unfiltered[cnts])
+                if area > 50:
+                    contours.append(contours_unfiltered[cnts])
+               
+            if len(contours) > 0:
+                useful_masks = True
+                if len(contours) == 1:
+                    segm = np.vstack(contours).squeeze()
+                    if segm.ndim > 1:
+                        x = [int(segm[idx][0]) for idx in range(len(segm))]
+                        y = [int(segm[idx][1]) for idx in range(len(segm))]
+                        xy = list(zip(x, y))
+
+                        writedata['shapes'].append({
+                            'label': class_name,
+                            'line_color': None,
+                            'fill_color': None,
+                            'points': xy,
+                            'group_id': None,
+                            'shape_type': "polygon",
+                            'flags': {}
+                        })
+
+                elif len(contours) > 1:
+                    for s in range(len(contours)):
+                        cnt = contours[s]
+                        segm = np.vstack(cnt).squeeze()
+                        if segm.ndim > 1:
+                            x = [int(segm[idx][0]) for idx in range(len(segm))]
+                            y = [int(segm[idx][1]) for idx in range(len(segm))]
+                            xy = list(zip(x, y))
+
+                            writedata['shapes'].append({
+                                'label': class_name,
+                                'line_color': None,
+                                'fill_color': None,
+                                'points': xy,
+                                'group_id': groupid,
+                                'shape_type': "polygon",
+                                'flags': {}
+                            })
+
+                    groupid = groupid + 1
+                        
+        writedata['lineColor'] = [0,255,0,128]
+        writedata['fillColor'] = [255,0,0,128]
+        writedata['imagePath'] = writename
+        writedata['imageData'] = None
+        writedata['imageHeight'] = height
+        writedata['imageWidth'] = width
+
+        jn = os.path.splitext(basename)[0] +'.json'
+        if useful_masks:
+            with open(os.path.join(write_dir, jn), 'w') as outfile:
+                json.dump(writedata, outfile)
+
+
+def write_darwin_annotations(write_dir, basename, class_names, masks, height, width):
+    masks = masks.astype(np.uint8)
+
+    if masks.any():
+        writedata = {}
+        writedata['dataset'] = "auto_annotate"
+        writedata['image'] = {
+            "width": width,
+            "height": height,
+            "original_filename": basename,
+            "filename": basename,
+            "url": "https://darwin.v7labs.com/",
+            "thumbnail_url": "https://darwin.v7labs.com/",
+            "path": "/",
+            "workview_url": "https://darwin.v7labs.com/"
+        }
+        writedata['annotations'] = []
+        writename = basename
+
+        md, mh, mw = masks.shape
+        maskstransposed = masks.transpose(1,2,0) # transform the mask in the same format as the input image array (h,w,num_dets)
+        useful_masks = False
+
+        for i in range (maskstransposed.shape[-1]):
+            masksel = maskstransposed[:,:,i] # select the individual masks
+            class_name = class_names[i]
+            contours_unfiltered, hierarchy = cv2.findContours((masksel*255).astype(np.uint8),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+            contours = []
+            for cnts in range(len(contours_unfiltered)):
+                area = cv2.contourArea(contours_unfiltered[cnts])
+                if area > 50:
+                    contours.append(contours_unfiltered[cnts])
+               
+            if len(contours) > 0:
+                useful_masks = True
+                if len(contours) == 1:
+                    segm = np.vstack(contours).squeeze()
+                    if segm.ndim > 1:
+                        x = [float(segm[idx][0]) for idx in range(len(segm))]
+                        y = [float(segm[idx][1]) for idx in range(len(segm))]
+                        xy = list(zip(x, y))
+
+                        writedata['annotations'].append({
+                            'instance_id': {"value": i+1},
+                            'name': class_name,
+                            'polygon': {"path": []},
+                        })
+
+                        for r in range(len(xy)):
+                            writedata['annotations'][i]['polygon']["path"].append({"x": xy[r][0], "y": xy[r][1]})
+
+                elif len(contours) > 1:
+                    writedata['annotations'].append({
+                            'instance_id': {"value": i+1},
+                            'name': class_name,
+                            'complex_polygon': {"path": []},
+                        })
+                    vc = 0
+                    for s in range(len(contours)):
+                        cnt = contours[s]
+                        segm = np.vstack(cnt).squeeze()
+                        if segm.ndim > 1:
+                            writedata['annotations'][i]['complex_polygon']["path"].append([])
+                            x = [float(segm[idx][0]) for idx in range(len(segm))]
+                            y = [float(segm[idx][1]) for idx in range(len(segm))]
+                            xy = list(zip(x, y))
+
+                            for r in range(len(xy)):
+                                writedata['annotations'][i]['complex_polygon']["path"][vc].append({"x": xy[r][0], "y": xy[r][1]})
+                            vc += 1
+
+        jn = os.path.splitext(basename)[0] +'.json'
+        if useful_masks:
+            with open(os.path.join(write_dir, jn), 'w') as outfile:
+                json.dump(writedata, outfile)        
 
 
 def get_class_names(rootdir, img_annot):
