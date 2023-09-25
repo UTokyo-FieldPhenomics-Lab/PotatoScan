@@ -1,4 +1,3 @@
-from ctypes import FormatError
 import os
 import Metashape
 

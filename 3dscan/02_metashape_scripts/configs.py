@@ -1,6 +1,15 @@
 import os
 
-working_directory =  r"C:\Users\kkoda\UTOKYOFieldPhenomics Dropbox\guo ut_fp\dataNprocess\hwang_Pro\data\2023_hokkaido_potato"
+import platform
+
+user = platform.node()
+
+if user == "Alienware":
+    working_directory =  r"C:\Users\kkoda\UTOKYOFieldPhenomics Dropbox\guo ut_fp\dataNprocess\hwang_Pro\data\2023_hokkaido_potato"
+elif user == "crest-nerv":
+    working_directory =  r"/home/crest/z/hwang_Pro/data/2023_hokkaido_potato"
+else:
+    raise FileNotFoundError(f"please add new user [{user}] setting in configs.py")
 
 #######################
 # 01 make masks by cv #
