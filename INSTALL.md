@@ -30,7 +30,12 @@ Tested on Ubuntu 22.04 with: Pytorch 1.9.0, torchvision 0.10.0, detectron2 0.6, 
 - pip install -e . 
 - pip install open3d <br/> <br/>
 
-**6) Reboot/restart the computer (sudo reboot)** <br/> <br/>
+**6) Alter ~/.bashrc file to prevent libGL error when doing open3d visualization, refer to [link](https://github.com/conda-forge/ctng-compilers-feedstock/issues/95)**
+- cd ..
+- sudo gedit ~/.bashrc
+- add this line at the end of the bashrc file: **export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libstdc++.so.6**
+- save and close the bashrc file
+- source ~/.bashrc <br/> <br/>
 
 **7) Check if Pytorch links with CUDA (in the potatoscan virtual environment, using the terminal):**
 - python
