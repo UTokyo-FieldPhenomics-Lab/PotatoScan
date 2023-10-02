@@ -20,14 +20,14 @@ def get_cv_mask(img_path):
     b_channel = lab_image[:, :, 2]
 
     # set channel threshold
-    color_threshold = 20  # 颜色阈值
+    color_threshold = 15  # 颜色阈值
 
     # 创建掩膜
     mask = np.logical_or(a_channel > color_threshold, b_channel > color_threshold)
 
     # fill holes in the mask
-    filled_mask = morphology.remove_small_holes(mask, area_threshold=h*w*0.005)
-    cleaned_mask = morphology.remove_small_objects(filled_mask, min_size=h*w*0.005)
+    filled_mask = morphology.remove_small_holes(mask, area_threshold=h*w*0.001)
+    cleaned_mask = morphology.remove_small_objects(filled_mask, min_size=h*w*0.001)
 
 
     # 将掩膜应用于原始图像
@@ -36,12 +36,14 @@ def get_cv_mask(img_path):
 
     return cleaned_mask, img_np, result
 
-def save_preview(img_np, cv_masks, psp_masks, save_path):
+def save_preview(title, img_np, cv_masks, psp_masks, save_path):
 
     mask_color = np.copy(img_np)
     mask_color[psp_masks==0] = 0
 
     fig,ax = plt.subplots(2,2, figsize=(10,10))
+
+    plt.suptitle(title)
 
     ax[0, 0].imshow(img_np)
     ax[0, 0].axis('off')
@@ -85,8 +87,6 @@ if __name__ == '__main__':
             file_path = os.path.join(foldername, filename)
             # file_dict[filename] = file_path
 
-            print(f"Processing {file_path}")
-
             mfolder = foldername.replace('images', 'masks')
 
             if not os.path.exists(mfolder):
@@ -97,7 +97,8 @@ if __name__ == '__main__':
             if os.path.exists(mask_path):
                 # skip processing exists file
                 continue
-            
+            else:
+                print(f"Processing {file_path}")
 
             # mask not exists
             cv_mask, img_np, result = get_cv_mask(file_path)
@@ -106,5 +107,7 @@ if __name__ == '__main__':
 
             io.imsave(mask_path, psp_mask)
 
+            title = file_path.replace(working_directory, '')
+
             if random.random() > 0.95:  # save 5% to preview
-                save_preview(img_np, cv_mask, psp_mask, os.path.join(preview_directory, maskname))
+                save_preview(title, img_np, cv_mask, psp_mask, os.path.join(preview_directory, maskname))
