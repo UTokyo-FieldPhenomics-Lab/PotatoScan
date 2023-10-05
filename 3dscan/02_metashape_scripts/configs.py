@@ -20,7 +20,7 @@ save_mask_folder = os.path.join(working_directory, "masks")
 # 02 make projects #
 ####################
 metashape_project_path = os.path.join(working_directory, "projects.psx", "align_test.psx")
-img_format = "jpg"   # the format of taken images
+img_format = "jpeg"   # the format of taken images
 mask_format = "png"   # the format of output masks, recommended for png format
 
 # 0: fix camera, flip objects, will only detect the markers in the first camera group

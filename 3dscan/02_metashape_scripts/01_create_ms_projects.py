@@ -172,6 +172,10 @@ if __name__ == '__main__':
         doc = open_metashape_project(os.path.join(working_directory, "projects.psx", ms_file+'.psx'))
 
         for chunk_id, chunk_value in chunk_rotate.items():
+
+            if not '5R' in chunk_id:
+                continue
+            
             chunk = create_one_chunk(doc, chunk_id, chunk_value, camera_mode)
             chunk = add_masks(chunk, os.path.join(working_directory, "masks"))
             chunk = add_scalebar(chunk, scalebar_dict[which_scalebar_file[chunk_id]])
