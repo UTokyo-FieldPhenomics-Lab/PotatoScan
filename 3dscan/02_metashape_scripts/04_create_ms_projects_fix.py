@@ -8,9 +8,17 @@ if __name__ == '__main__':
 
     doc_dict = {}
 
+    fname = 'XR_GroupFix'
+
+    problem_chunk = ['R1-2', '3R4-4', '3R4-5', '3R4-6', '3R4-7', '3R4-8', '3R4-9', '3R4-10']
+
     for subfolder in os.listdir(cfg.image_folder):
         chunk_id = subfolder
-        print(chunk_id)
+
+        if chunk_id not in problem_chunk:
+            continue
+        else:
+            print(f'Retry: {chunk_id}')
 
         # 2R5-10 -> aRb-c
         b, c = chunk_id.split('-')
@@ -19,11 +27,6 @@ if __name__ == '__main__':
             a = 1
 
         a, b, c = int(a), int(b), int(c)
-
-        # 50 as one group maximum
-        group_id = b // 5
-
-        fname = f'{a}R_Group{group_id}'
 
         if fname not in doc_dict.keys():
             # already exists
@@ -55,15 +58,15 @@ if __name__ == '__main__':
 
         for chunk_id, chunk_value in chunk_rotate.items():
 
-            if not '5R' in chunk_id:
-                continue
+            # if not '5R' in chunk_id:
+            #     continue
 
             chunk = mst.create_one_chunk(doc, chunk_id, chunk_value, cfg.camera_mode, cfg.image_folder, cfg.img_format)
-            chunk = mst.add_masks(chunk, os.path.join(cfg.working_directory, "masks"))
+            chunk = mst.add_masks(chunk, os.path.join(cfg.working_directory, "masks"), cfg.mask_format)
             chunk = mst.add_scalebar(chunk, scalebar_dict[which_scalebar_file[chunk_id]])
 
+            # add GCP for z axis
+            chunk.importReference(cfg.target_xyz_position_file, format=Metashape.ReferenceFormat(3), columns="nxyz", delimiter=",")
+            chunk.updateTransform()
+
             doc.save()
-
-            # break
-
-        # break

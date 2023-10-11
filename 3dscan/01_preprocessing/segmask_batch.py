@@ -7,7 +7,7 @@ from skimage import color, io, morphology
 
 from cascade_psp import Refiner
 
-def get_cv_mask(img_path):
+def get_cv_mask(img_path, color_threshold=15, fill_ratio=0.001, remove_ratio=0.001):
     img_np = plt.imread(img_path)
 
     h,w,d = img_np.shape
@@ -20,14 +20,14 @@ def get_cv_mask(img_path):
     b_channel = lab_image[:, :, 2]
 
     # set channel threshold
-    color_threshold = 15  # 颜色阈值
+    # color_threshold = 15  # 颜色阈值
 
     # 创建掩膜
     mask = np.logical_or(a_channel > color_threshold, b_channel > color_threshold)
 
     # fill holes in the mask
-    filled_mask = morphology.remove_small_holes(mask, area_threshold=h*w*0.001)
-    cleaned_mask = morphology.remove_small_objects(filled_mask, min_size=h*w*0.001)
+    filled_mask = morphology.remove_small_holes(mask, area_threshold=h*w*fill_ratio)
+    cleaned_mask = morphology.remove_small_objects(filled_mask, min_size=h*w*remove_ratio)
 
 
     # 将掩膜应用于原始图像
@@ -36,7 +36,10 @@ def get_cv_mask(img_path):
 
     return cleaned_mask, img_np, result
 
-def save_preview(title, img_np, cv_masks, psp_masks, save_path):
+def save_preview(title, img_np, cv_masks, psp_masks, save_path, random_save=0.05):
+
+    if random.random() > 1-random_save:  # save 5% to preview
+        return
 
     mask_color = np.copy(img_np)
     mask_color[psp_masks==0] = 0

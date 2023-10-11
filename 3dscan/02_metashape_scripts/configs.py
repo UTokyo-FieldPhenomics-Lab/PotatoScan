@@ -20,7 +20,7 @@ save_mask_folder = os.path.join(working_directory, "masks")
 # 02 make projects #
 ####################
 metashape_project_path = os.path.join(working_directory, "projects.psx", "align_test.psx")
-img_format = "jpeg"   # the format of taken images
+img_format = "jpg"   # the format of taken images
 mask_format = "png"   # the format of output masks, recommended for png format
 
 # 0: fix camera, flip objects, will only detect the markers in the first camera group
@@ -34,7 +34,7 @@ camera_mode = 1
 
 # the XYZ position of each target
 # default: None
-# target_xyz_position_file = r"E:\2021_tanashi_foldio360\gcp.csv"   
+target_xyz_position_file = "gcp.csv"  
 
 # if XYZ position hard to provide, then can tell the distances between targets instead
 # default: None
