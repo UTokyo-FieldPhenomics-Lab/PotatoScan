@@ -2,7 +2,7 @@
 <batchjobs version="2.0.2" save_project="false">
   <job name="ExportModel" target="all">
     <format>1</format>
-    <path>../outputs/{chunklabel}.obj</path>
+    <path>../outputs/models/{chunklabel}.obj</path>
     <strip_extensions>true</strip_extensions>
   </job>
 </batchjobs>
