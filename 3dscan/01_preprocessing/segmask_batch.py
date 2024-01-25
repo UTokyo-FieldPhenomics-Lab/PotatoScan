@@ -2,6 +2,7 @@ import os
 import random
 import numpy as np
 import matplotlib.pyplot as plt
+from datetime import datetime
 
 from skimage import color, io, morphology
 
@@ -70,11 +71,14 @@ def save_preview(title, img_np, cv_masks, psp_masks, save_path, random_save=0.05
     plt.clf()
     plt.cla()
 
+    plt.close()
+
     del fig, ax
 
 if __name__ == '__main__':
 
-    working_directory = r"/home/crest/z/hwang_Pro/data/2023_hokkaido_potato"
+    # working_directory = r"/home/crest/z/hwang_Pro/data/2023_hokkaido_potato"
+    working_directory = r"/home/crest/w/hwang_Pro/data/2023_tanashi_wheat"
     psp_model_path = 'psp_models/cascade_psp'
 
     img_folder = os.path.join(working_directory, 'images')
@@ -101,14 +105,15 @@ if __name__ == '__main__':
                 # skip processing exists file
                 continue
             else:
-                print(f"Processing {file_path}")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Processing {file_path.split('images')[-1]}")
 
             # mask not exists
-            cv_mask, img_np, result = get_cv_mask(file_path)
+            cv_mask, img_np, result = get_cv_mask(file_path, 5, 0.00001, 0.001)
 
+            # psp_mask = (cv_mask * 255).astype(np.uint8)
             psp_mask = psp_refiner.refine(img_np, cv_mask*255, fast=False, L=900)
 
-            io.imsave(mask_path, psp_mask)
+            io.imsave(mask_path, psp_mask, check_contrast=False)  # block low contrast warnings
 
             title = file_path.replace(working_directory, '')
 

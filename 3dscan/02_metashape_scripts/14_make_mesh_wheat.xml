@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<batchjobs version="2.0.3">
+  <job name="BuildModel" target="unprocessed">
+    <downscale>2</downscale>
+    <face_count_custom>40000</face_count_custom>
+    <reuse_depth>true</reuse_depth>
+  </job>
+  <job name="BuildTexture" target="unprocessed">
+    <texture_size>2048</texture_size>
+  </job>
+</batchjobs>

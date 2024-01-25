@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<batchjobs version="2.0.3">
+  <job name="AlignPhotos" target="all">
+    <guided_matching>true</guided_matching>
+    <keypoint_limit>10000</keypoint_limit>
+    <keypoint_limit_per_mpx>10000</keypoint_limit_per_mpx>
+    <mask_tiepoints>false</mask_tiepoints>
+    <reset_alignment>true</reset_alignment>
+    <reset_matches>true</reset_matches>
+  </job>
+</batchjobs>
