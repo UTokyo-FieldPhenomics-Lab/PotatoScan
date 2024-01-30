@@ -7,6 +7,8 @@ import pandas as pd
 import copy
 import json
 
+import pathlib
+
 class PinRegions:
     def __init__(self, img_root, coco_file, csv_file, intrinsics_file):
         self.img_root = img_root
@@ -181,8 +183,128 @@ class PinRegions:
         cv2.destroyAllWindows()
 
 
+class RgbdPinFetcher(object):
+
+    def __init__(self, rgbd_root):
+        self.pr = PinRegions(
+            img_root = rgbd_root / '1_rgbd/1_image',
+            coco_file = rgbd_root / '1_rgbd/pin_regions.json',
+            csv_file = rgbd_root / 'ground_truth.csv',
+            intrinsics_file = rgbd_root / '1_rgbd/0_camera_intrinsics/realsense_d405_camera_intrinsic.json',
+        )
+
+        img_ids = self.pr.coco.getImgIds()
+        img_infos = self.pr.coco.loadImgs(img_ids)
+
+        self.centered_img = self.find_center_img(img_infos, img_height=720)
+
+    def get(self, potato_id, visualize=False):
+        pcd, pcd_pin = self.get_pcd_pin(self.pr, self.centered_img, potato_id)
+
+        if visualize:
+            o3d.visualization.draw_geometries([pcd, pcd_pin])
+
+        return pcd, pcd_pin
+
+
+    @staticmethod
+    def find_center_img(img_infos, img_height):
+        # a dict to store all frame infos
+        # it has the following structure
+        # {'2R1-1': 
+        #    {100: {'rgb'  : '2R1-1/2R1-1_rgb_100.png',
+        #           'depth': '2R1-1/2R1-1_depth_100.png'
+        #           'coco_id': xxx, },
+        #     121: {'rgb'  : '2R1-1/2R1-1_rgb_121.png',
+        #           'depth': '2R1-1/2R1-1_depth_121.png',
+        #           'coco_id': xxx, },
+        #     ...
+        img_names = {}
+
+        for img_info in img_infos:
+            fn = img_info['file_name']
+
+            img_id = fn.split('/')[0]
+
+            if img_id not in img_names.keys():
+                img_names[img_id] = {}
+
+            pos = int(fn.split('_')[-1][:-4])
+
+            if pos not in img_names[img_id].keys():
+                img_names[img_id][pos]  = {}
+
+            img_names[img_id][pos]['rgb'] = fn
+            img_names[img_id][pos]['depth'] = fn.replace('rgb', 'depth')
+            img_names[img_id][pos]['coco_id'] = img_info['id']
+
+        # pick the most centered one (closest to the half img height)
+        # it has the following structure:
+        # {
+        # '2R1-1': 
+        #    {'rgb': '2R1-1/2R1-1_rgb_358.png',
+        #     'depth': '2R1-1/2R1-1_depth_358.png',
+        #     'coco_id': xxx},
+        # '2R1-10': 
+        #    {'rgb': '2R1-10/2R1-10_rgb_364.png',
+        #     'depth': '2R1-10/2R1-10_depth_364.png',
+        #     'coco_id': xxx},
+        centered_img = {}
+
+        for potato_id, rgbd_list in img_names.items():
+
+            rgbd_id_array = np.asarray(list(rgbd_list.keys())) 
+
+            dis = abs(rgbd_id_array - ( img_height / 2 ))
+            
+            min_id = rgbd_id_array[np.argmin(dis)]
+
+            centered_img[potato_id] = rgbd_list[min_id]
+
+        return centered_img
+
+    @staticmethod
+    def get_pcd_pin(pr, centered_img, potato_id):
+        rgb_img_path = pr.img_root / centered_img[potato_id]['rgb']
+        depth_img_path = pr.img_root / centered_img[potato_id]['depth']
+
+        # rgb img
+        rgba = cv2.imread(str(rgb_img_path), cv2.IMREAD_UNCHANGED)
+        img = rgba[:,:,:-1]
+        mask = rgba[:,:,-1]
+
+        # depth img
+        dimg = cv2.imread(str(depth_img_path), cv2.IMREAD_UNCHANGED)
+
+        # annotation on rgb img
+        ann_ids = pr.coco.getAnnIds(imgIds=centered_img[potato_id]['coco_id'])
+        annotations = pr.coco.loadAnns(ann_ids)
+
+        # the x3_depth_mm of given potato
+        gt_depth = pr.df.loc[pr.df['label'] == potato_id, 'x3_depth_mm'].values[0]
+
+        if len(annotations) != 1:
+            raise ValueError('has multiple annotations for one potato')
+        else:
+            pin_region = annotations[0]['segmentation']
+            pin_mask = pr.binary_mask(img, pin_region)
+            bin_pin = pin_mask.astype(bool)
+            bin_mask = mask.astype(bool)
+
+            pcd_pin = pr.process_pcd(
+                img, dimg, bin_mask, bin_pin, 
+                name=ann_ids, gt_depth=gt_depth)
+
+        # read the source image
+        pcd_file = centered_img[potato_id]['rgb'].replace('rgb', 'pcd').replace('.png', '.ply')
+        pcd_path = pr.img_root / f"../2_pcd" / pcd_file
+        pcd = o3d.io.read_point_cloud(str(pcd_path.resolve()))
+
+        return pcd, pcd_pin
+
 
 if __name__ == '__main__':
+    # example for pin_regions
     img_root = '/mnt/data/PieterBlok/Potato/Data/3DPotatoTwin/1_rgbd/1_image'
     coco_file = '/mnt/data/PieterBlok/Potato/Data/3DPotatoTwin/1_rgbd/pin_regions.json'
     csv_file = '/mnt/data/PieterBlok/Potato/Data/3DPotatoTwin/ground_truth.csv'
@@ -191,3 +313,8 @@ if __name__ == '__main__':
     pin_regions = PinRegions(img_root, coco_file, csv_file, intrinsics)
     # pin_regions.visualize_annotations()
     pin_regions.visualize_annotations(visualize_pcd=True)
+
+    # an advanced wrapper
+    rgbd_root = pathlib.Path(r'/home/crest/w/hwang_Pro/datasets/3DPotatoTwin')
+    rgbd_fetcher = RgbdPinFetcher(rgbd_root)
+    pcd, pcd_pin = rgbd_fetcher.get('2R1-1')
