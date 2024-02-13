@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<batchjobs version="2.0.2">
+<batchjobs version="2.0.4">
   <job name="AlignPhotos" target="unprocessed">
     <filter_mask>true</filter_mask>
     <mask_tiepoints>false</mask_tiepoints>
     <reference_preselection_mode>2</reference_preselection_mode>
+  </job>
+  <job name="RunScript" target="all">
+    <path>../scripts/02_metashape/03_update_regions.py</path>
   </job>
   <job name="BuildModel" target="unprocessed">
     <downscale>2</downscale>
