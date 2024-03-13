@@ -208,13 +208,32 @@ class RgbdPinFetcher(object):
 
         self.centered_img = self.find_center_img(img_infos, img_height=720)
 
-    def get(self, potato_id, visualize=False):
-        pcd, pcd_pin = self.get_pcd_pin(self.pr, self.centered_img, potato_id)
+    def get(self, potato_id, show=False):
+        pcd, pin_pcd = self.get_pcd_pin(self.pr, self.centered_img, potato_id)
 
-        if visualize:
-            o3d.visualization.draw_geometries([pcd, pcd_pin])
+        pcd_xyz = np.asarray(pcd.points)
+        pin_pcd_xyz = np.asarray(pin_pcd.points)
 
-        return pcd, pcd_pin
+        # get the index of pin
+        pin_idx = []
+        for p in pin_pcd_xyz:
+            distance = pcd_xyz - p
+            distance = distance.sum(axis=1)
+            idx_temp = np.where(distance == 0)[0]
+
+            if idx_temp:
+                pin_idx.append(idx_temp)
+
+        if show:
+            o3d.visualization.draw_geometries([pcd, pin_pcd])
+
+        results = {
+            'pcd': pcd,
+            'pin_pcd': pin_pcd,
+            'pin_idx': pin_idx
+        }
+
+        return results
 
 
     @staticmethod
@@ -326,7 +345,7 @@ class SfMPinFetcher():
     def get(self, potato_id, 
             thresh=None, # for color diff
             nb_points=40, radius=0.005, # for denoise
-            visualize=False
+            visualize=False, show=False
         ):
         """All the default settings are according to POTATO!
         Refer to `05_mesh_pin_colorref.ipynb` for draft references
@@ -342,6 +361,8 @@ class SfMPinFetcher():
             The number of points to denoise point cloud, 
             the parameter of `remove_radius_outlier` in open3d
         visualize: bool
+            Return data for visualization
+        show: bool
             Whether show ths intermediate results for debugging
 
         Returns
@@ -354,12 +375,14 @@ class SfMPinFetcher():
             the index of pin points in whole potato point cloud
         """
 
-        sfm_pin_idx, sfm_pcd = self.hsv_ref_pin(
+        # rc -> results_container
+        rc = self.hsv_ref_pin(
             self.sfm_pcd_folder, potato_id, self.ref_color_hsv, 
-            thresh, nb_points, radius, visualize)
-        sfm_pin_pcd = sfm_pcd.select_by_index(sfm_pin_idx)
+            thresh, nb_points, radius, visualize, show)
+        
+        rc['pin_pcd'] = rc['pcd'].select_by_index(rc['pin_idx'])
 
-        return sfm_pcd, sfm_pin_pcd, sfm_pin_idx
+        return rc
 
     @staticmethod
     def get_ref_color(ref_folder):
@@ -407,7 +430,7 @@ class SfMPinFetcher():
         sfm_pcd_folder, potato_id, 
         ref_color_hsv, thresh=None, # for color diff
         nb_points=40, radius=0.005, # for denoise
-        visualize=False
+        visualize=False, show=False
     ):
         # get the sfm pcd
         sfm_pcd_path = sfm_pcd_folder / f"{potato_id}_30000.ply"
@@ -463,7 +486,12 @@ class SfMPinFetcher():
             else:
                 print(f"Stop at thresh={thresh} with hull volume = {hull_volume}")
 
-        if visualize:
+        results_container = {
+            "pin_idx": pin_idx,
+            "pcd": sfm_pcd
+        }
+
+        if visualize or show:
             # 选择一个colormap
             colormap = plt.cm.viridis
 
@@ -477,15 +505,19 @@ class SfMPinFetcher():
             sfm_pcd_cm.points = o3d.utility.Vector3dVector(xyz)
 
             pin_pcd = sfm_pcd.select_by_index(pin_idx)
-            if potato_id.split('-')[-1] == '3': # red pin
-                pin_pcd.paint_uniform_color([0,1,0])
+            pin_id = potato_id.split('-')[-1] 
+            if pin_id == '3': # red pin
+                pin_pcd.paint_uniform_color([1,1,0])
             else:
                 pin_pcd.paint_uniform_color([1,0,0])
+
+            results_container['pcd_offset_colormap'] = sfm_pcd_cm
+            results_container['pin_pcd_strengthen'] = pin_pcd
             
+            if show:
+                o3d.visualization.draw_geometries([sfm_pcd, sfm_pcd_cm, pin_pcd], window_name=f"{potato_id} | thresh={thresh}")
 
-            o3d.visualization.draw_geometries([sfm_pcd, sfm_pcd_cm, pin_pcd], window_name=f"{potato_id} | thresh={thresh}")
-
-        return pin_idx, sfm_pcd
+        return results_container
     
             
 if __name__ == '__main__':
