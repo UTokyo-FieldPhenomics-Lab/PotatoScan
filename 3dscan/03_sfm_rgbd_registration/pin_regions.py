@@ -1,3 +1,6 @@
+import pathlib
+
+# RGBD fether
 import os
 import cv2
 import open3d as o3d
@@ -7,9 +10,16 @@ import pandas as pd
 import copy
 import json
 
-import pathlib
+# sfm fetcher
+import matplotlib.pyplot as plt
+import skimage
+import matplotlib.colors as mcolors
+from copy import deepcopy
+
 
 class PinRegions:
+    """The base object for RgbdPinFetcher
+    """
     def __init__(self, img_root, coco_file, csv_file, intrinsics_file):
         self.img_root = img_root
         self.coco = COCO(coco_file)
@@ -301,8 +311,183 @@ class RgbdPinFetcher(object):
         pcd = o3d.io.read_point_cloud(str(pcd_path.resolve()))
 
         return pcd, pcd_pin
+    
+###########
+# SfM Pin #
+###########
+    
+class SfMPinFetcher():
 
+    def __init__(self, dataset_root, ref_folder) -> None:
+        self.sfm_pcd_folder = dataset_root / '2_SfM/2_pcd'
 
+        self.ref_color_hsv = self.get_ref_color(ref_folder)
+
+    def get(self, potato_id, 
+            thresh=None, # for color diff
+            nb_points=40, radius=0.005, # for denoise
+            visualize=False
+        ):
+        """All the default settings are according to POTATO!
+        Refer to `05_mesh_pin_colorref.ipynb` for draft references
+
+        Parameters
+        ----------
+        potato_id : str
+            The name of potato, remove the file suffix
+        thresh : float, optional
+            The threshold for calcuating color differences 
+            between pin and potato surface, by default None
+        nb_points | radius : float, opional
+            The number of points to denoise point cloud, 
+            the parameter of `remove_radius_outlier` in open3d
+        visualize: bool
+            Whether show ths intermediate results for debugging
+
+        Returns
+        -------
+        sfm_pcd
+            whole potato point cloud
+        sfm_pin_pcd
+            point cloud of pin on potato surface 
+        sfm_pin_idx
+            the index of pin points in whole potato point cloud
+        """
+
+        sfm_pin_idx, sfm_pcd = self.hsv_ref_pin(
+            self.sfm_pcd_folder, potato_id, self.ref_color_hsv, 
+            thresh, nb_points, radius, visualize)
+        sfm_pin_pcd = sfm_pcd.select_by_index(sfm_pin_idx)
+
+        return sfm_pcd, sfm_pin_pcd, sfm_pin_idx
+
+    @staticmethod
+    def get_ref_color(ref_folder):
+
+        ref_color_folder = pathlib.Path(ref_folder)
+
+        ref_color_rgb = []
+        ref_color_hsv = {}
+
+        for i in range(1,11):
+
+            ref_img_path = ref_color_folder / f"{i}.png"
+
+            ref_color_imarray = plt.imread( str(ref_img_path) )
+
+            mask = ref_color_imarray[:,:,3] == 1
+
+            ref_color_masked = ref_color_imarray[mask]
+
+            ref_color_rgb.append(np.median(ref_color_masked[:,0:3], axis=0))
+            ref_color_hsv[str(i)] = np.median(skimage.color.rgb2hsv(ref_color_masked[:,0:3]), axis=0)
+
+        # custom_colormap = ListedColormap(np.asarray(ref_color_rgb))
+
+        return ref_color_hsv
+
+    @staticmethod
+    def get_hull_volume(o3d_pcd):
+        pin_hull = o3d_pcd.compute_convex_hull()[0]
+        hull_volume = pin_hull.get_volume() * 1000 ** 3 # mm3
+
+        return hull_volume
+
+    def iter_hull_volume_by_thresh(self, sfm_pcd, color_distance_norm, thresh):
+
+        pin_idx = np.where(color_distance_norm < thresh)[0]
+
+        # calculate volume, if too large needs denoise
+        pin_pcd = sfm_pcd.select_by_index(pin_idx)
+        hull_volume = self.get_hull_volume(pin_pcd) # mm3
+
+        return hull_volume, pin_idx
+
+    def hsv_ref_pin(self,
+        sfm_pcd_folder, potato_id, 
+        ref_color_hsv, thresh=None, # for color diff
+        nb_points=40, radius=0.005, # for denoise
+        visualize=False
+    ):
+        # get the sfm pcd
+        sfm_pcd_path = sfm_pcd_folder / f"{potato_id}_30000.ply"
+        sfm_pcd = o3d.io.read_point_cloud( str(sfm_pcd_path) )
+
+        colors = np.asarray(sfm_pcd.colors)
+
+        colors_hsv = skimage.color.rgb2hsv(colors)
+
+        
+        # color_distance = abs(colors_hsv - ref_color_hsv[ potato_id.split('-')[-1] ]).sum(axis=1)
+        color_distance_diff = abs(colors_hsv - ref_color_hsv[ potato_id.split('-')[-1] ])
+        # hue -> circular distances
+        need_hue_reverse = color_distance_diff[:,0] > 0.5
+        color_distance_diff[need_hue_reverse, 0] = 1 - color_distance_diff[need_hue_reverse, 0]
+
+        color_distance_weight = color_distance_diff * np.array([0.5,0.1,0.3])  # hsv weight
+        color_distance = color_distance_weight.sum(axis=1)
+
+        # 定义一个Normalize对象，用于将数据值归一化到[0, 1]的范围
+        norm = mcolors.Normalize(vmin=np.min(color_distance), vmax=np.max(color_distance))
+
+        color_distance_norm = norm(color_distance)
+
+        # manually set the threshold
+        if thresh is not None:
+            hull_volume, pin_idx = self.iter_hull_volume_by_thresh(sfm_pcd, color_distance_norm, thresh)
+        
+        # looping the thresh to denoise
+        else:
+            thresh = 0.35
+            hull_volume, pin_idx = self.iter_hull_volume_by_thresh(sfm_pcd, color_distance_norm, thresh)
+
+            while hull_volume > 60:
+                print(f"Thresh={thresh} get pin convex hull volumn {hull_volume} > 60, denoise first")
+                pin_pcd = sfm_pcd.select_by_index(pin_idx)
+                keeped, keeped_idx = pin_pcd.remove_radius_outlier(nb_points=nb_points, radius=radius)
+
+                denoised_volume = self.get_hull_volume(keeped)
+
+                if denoised_volume > 60:  # still > 50 after denoising
+                    thresh -= 0.05
+
+                    if thresh <0:
+                        raise ValueError("Threshold can not below 0")
+
+                    hull_volume, pin_idx = self.iter_hull_volume_by_thresh(sfm_pcd, color_distance_norm, thresh)
+                else:
+                    hull_volume = denoised_volume
+                    pin_idx = pin_idx[keeped_idx]
+                    print(f"Stop at thresh={thresh} with hull volume = {hull_volume} after denoising")
+                    break
+            else:
+                print(f"Stop at thresh={thresh} with hull volume = {hull_volume}")
+
+        if visualize:
+            # 选择一个colormap
+            colormap = plt.cm.viridis
+
+            # 使用colormap和Normalize对象将数据值映射到颜色
+            color_array = colormap(norm(color_distance))
+            sfm_pcd_cm = deepcopy(sfm_pcd)
+            sfm_pcd_cm.colors = o3d.utility.Vector3dVector(color_array[:,0:3])
+
+            # add offsets
+            xyz = np.asarray(sfm_pcd_cm.points) + np.array([0.1, 0, 0])
+            sfm_pcd_cm.points = o3d.utility.Vector3dVector(xyz)
+
+            pin_pcd = sfm_pcd.select_by_index(pin_idx)
+            if potato_id.split('-')[-1] == '3': # red pin
+                pin_pcd.paint_uniform_color([0,1,0])
+            else:
+                pin_pcd.paint_uniform_color([1,0,0])
+            
+
+            o3d.visualization.draw_geometries([sfm_pcd, sfm_pcd_cm, pin_pcd], window_name=f"{potato_id} | thresh={thresh}")
+
+        return pin_idx, sfm_pcd
+    
+            
 if __name__ == '__main__':
     # example for pin_regions
     img_root = '/mnt/data/PieterBlok/Potato/Data/3DPotatoTwin/1_rgbd/1_image'
