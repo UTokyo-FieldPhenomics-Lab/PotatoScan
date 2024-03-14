@@ -42,8 +42,107 @@ def convert_2d_to_3d(points_2d, plane_point, u, v):
     points_3d = plane_point + points_2d[:, 0, np.newaxis] * u + points_2d[:, 1, np.newaxis] * v
     return points_3d
 
+def project_points_on_vector(points, vector, return_1d=False):
+    """
+    把点投影到给定向量上
+    输入：points: nx3的三维点
+         vector: 1x3的向量
+    输出：投影后的点(在空间中的位置)
+    """
+    v_norm = np.sqrt(sum(vector**2))
 
-def fit_circle_to_convex_hull(points_2d, visualize=False):
+    v3d = (np.dot(points, vector.reshape(3,1))/v_norm**2)*vector
+
+    if return_1d:
+        return np.sqrt(np.sum(v3d**2, axis=1))
+    else:
+        return v3d
+    
+def correct_vector_direction(points, vector, vector_root, colors):
+    start_point = vector_root
+    end_point = vector_root + vector/100
+    # 把start_point & end_point 插入到头部
+    root_on_top = np.vstack([start_point.T, end_point.T, points])
+
+    root_on_top_projected = project_points_on_vector(
+        points=root_on_top, 
+        vector=vector, 
+        return_1d=True
+    )
+    
+    potato_min = root_on_top_projected[2:].min()
+    potato_max = root_on_top_projected[2:].max()
+
+    start = root_on_top_projected[0]
+    end = root_on_top_projected[1]
+
+    # find out st close to which
+    dist2min = abs(start - potato_min)
+    dist2max = abs(start - potato_max)
+
+    print(f"st = {start} | ed = {end} | min = {potato_min} | max = {potato_max}")
+    # =====debug=====
+    # plot in 3d
+    # root_on_top_projected_3d= project_points_on_vector(
+    #     points=root_on_top, 
+    #     vector=vector, 
+    #     return_1d=False)
+    # # colors = np.insert([[0,1,0]], 0, colors, axis=0)  # green = end
+    # # colors = np.insert([[1,0,0]], 0, colors, axis=0)  # red = top
+    # pts = o3d.geometry.PointCloud()
+    # pts.points = o3d.utility.Vector3dVector(root_on_top_projected_3d[2:, :])
+    # pts.colors = o3d.utility.Vector3dVector(colors)
+
+    # direct_pts = o3d.geometry.PointCloud()
+    # direct_pts.points = o3d.utility.Vector3dVector(root_on_top_projected_3d[:2, :] + np.array([0,0,0.005]))
+    # direct_pts.colors = o3d.utility.Vector3dVector([[0,1,0], [1,0,0]])
+    # o3d.visualization.draw_geometries([pts, direct_pts])
+
+    # plot in 2d
+    # fig,ax = plt.subplots(1,1, figsize=(4,2))
+    # ax.scatter(x=root_on_top_projected[2:], y=np.zeros_like(root_on_top_projected[2:]), c=colors)
+    # ax.scatter(x=root_on_top_projected[:2], y=[0.1, 0.1], c=[[1,0,0],[0,1,0]])
+    # plt.axis('equal')
+    # plt.show()
+    # =====end debug=====
+
+    if dist2min < dist2max:  # st close to min
+        if start < end:
+            #         st ==========> ed      
+            #         |
+            # -----|--o--------|-------->
+            #      min         max  
+            # 
+            # in this case, normal need revert
+            return -vector
+        else:
+            #  ed <== st    
+            #         |
+            # -----|--o--------|-------->
+            #      min         max  
+            # 
+            # in this case, nomal no need revert
+            return vector
+    else: # st close to max
+        if start < end:
+            #             st ==========> ed      
+            #              |
+            # -----|-------o---|-------->
+            #      min         max  
+            # 
+            # in this case, normal no need revert
+            return vector
+        else:
+            #  ed <======= st    
+            #              |
+            # -----|-------o---|-------->
+            #      min         max  
+            #
+            # in this case, normal need revert
+            return -vector
+
+
+def fit_circle_to_convex_hull(points_2d, show=False):
     """平面圆拟合"""
 
     # 获取凸包的顶点
@@ -53,7 +152,7 @@ def fit_circle_to_convex_hull(points_2d, visualize=False):
     # xc, yc, r, sigma = taubinSVD(hull_points)
     xc, yc, r, sigma = hyperLSQ(hull_points)
 
-    if visualize:
+    if show:
         fig, ax = plt.subplots(1, 1, figsize=(4,4))
         ax.scatter(*points_2d.T, color='k', s=0.1, alpha=0.3)
         ax.scatter(*hull_points.T, color='r')
@@ -151,7 +250,7 @@ def create_circle_mesh(center_2d, radius, plane_point, uv, num_segments=100, col
     
     return mesh_lineset
 
-def find_pin_center(pin_pcd, circle_color=[1,0,0], visualize=False, show=False):
+def find_pin_center(pin_pcd, pcd, circle_color=[1,0,0], visualize=False, show=False):
     pin_hull, hull_idx = pin_pcd.compute_convex_hull()
     
     # get bounding box size
@@ -165,17 +264,24 @@ def find_pin_center(pin_pcd, circle_color=[1,0,0], visualize=False, show=False):
     min_extent_length = extents[min_extent_idx]
 
     # 获取对应于最短边的轴
-    min_extent_vector = hull_obb.R[:, min_extent_idx]
+    _min_extent_vector = hull_obb.R[:, min_extent_idx]
+    _min_extent_vector = _min_extent_vector / np.linalg.norm(_min_extent_vector)
 
     # 获取边界框的中心，作为平面上的一个点
     plane_point = hull_obb.center
 
+    # 矫正轴的方向
+    pin_vector = correct_vector_direction(
+        np.asarray(pcd.points), _min_extent_vector, plane_point, np.asarray(pcd.colors)
+    )
+    print(f"pin vector from {_min_extent_vector} to {pin_vector}")
+
     # 投影到最短边对应的平面上
     points_3d = np.asarray(pin_pcd.points)
-    points_proj_3d, points_proj_2d, uv = project_to_plane_vectorized(points_3d, plane_point, min_extent_vector)
+    points_proj_3d, points_proj_2d, uv = project_to_plane_vectorized(points_3d, plane_point, pin_vector)
 
     # 计算2D点集的凸包，并拟合圆
-    circle_center_2d, circle_radius, sigma = fit_circle_to_convex_hull(points_proj_2d, visualize)
+    circle_center_2d, circle_radius, sigma = fit_circle_to_convex_hull(points_proj_2d, show)
 
     # 将2D圆心转换回3D空间坐标
     circle_center_3d = convert_2d_to_3d(np.asarray([circle_center_2d]), plane_point, uv[0], uv[1])
@@ -184,7 +290,7 @@ def find_pin_center(pin_pcd, circle_color=[1,0,0], visualize=False, show=False):
     results = {
         "circle_center_3d": circle_center_3d,
         "circle_radius": circle_radius,
-        "vector": min_extent_vector,
+        "vector": pin_vector,
     }
 
     if visualize or show:
@@ -198,8 +304,8 @@ def find_pin_center(pin_pcd, circle_color=[1,0,0], visualize=False, show=False):
         circle_mesh = create_circle_mesh(circle_center_2d, circle_radius, plane_point, uv, color=circle_color)
 
         # 创建vector的箭头
-        normal_vector = min_extent_vector / np.linalg.norm(min_extent_vector)
-        end_point = circle_center_3d + normal_vector / 100 # to 1 cm
+        # normal_vector = pin_vector / np.linalg.norm(pin_vector)
+        end_point = circle_center_3d + pin_vector / 100 # to 1 cm
         lineset = o3d.geometry.LineSet()
         # 设置点（两个点：起点和终点）
         lineset.points = o3d.utility.Vector3dVector([circle_center_3d, end_point])

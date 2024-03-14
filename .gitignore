@@ -2,3 +2,4 @@
 __pycache__
 3dscan/01_preprocessing/psp_models/*
 3dscan/01_preprocessing/sam_models/*
+3dscan/00_data_collection/device.hardware/ms_12bit_out.pdf

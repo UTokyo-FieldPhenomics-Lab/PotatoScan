@@ -208,7 +208,7 @@ class RgbdPinFetcher(object):
 
         self.centered_img = self.find_center_img(img_infos, img_height=720)
 
-    def get(self, potato_id, show=False):
+    def get(self, potato_id, visualize=False, show=False):
         pcd, pin_pcd = self.get_pcd_pin(self.pr, self.centered_img, potato_id)
 
         pcd_xyz = np.asarray(pcd.points)
