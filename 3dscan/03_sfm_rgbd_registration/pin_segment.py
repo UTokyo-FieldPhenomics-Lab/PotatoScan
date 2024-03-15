@@ -455,6 +455,8 @@ class SfMPinFetcher():
 
         color_distance_norm = norm(color_distance)
 
+        print(":: iterative pin segmentation of SfM point clouds")
+
         # manually set the threshold
         if thresh is not None:
             hull_volume, pin_idx = self.iter_hull_volume_by_thresh(sfm_pcd, color_distance_norm, thresh)
@@ -465,7 +467,7 @@ class SfMPinFetcher():
             hull_volume, pin_idx = self.iter_hull_volume_by_thresh(sfm_pcd, color_distance_norm, thresh)
 
             while hull_volume > 60:
-                print(f"Thresh={thresh} get pin convex hull volumn {hull_volume} > 60, denoise first")
+                print(f"    Thresh={thresh} get pin convex hull volumn {hull_volume} > 60, denoise first")
                 pin_pcd = sfm_pcd.select_by_index(pin_idx)
                 keeped, keeped_idx = pin_pcd.remove_radius_outlier(nb_points=nb_points, radius=radius)
 
@@ -475,16 +477,16 @@ class SfMPinFetcher():
                     thresh -= 0.05
 
                     if thresh <0:
-                        raise ValueError("Threshold can not below 0")
+                        raise ValueError(" x   Threshold can not below 0")
 
                     hull_volume, pin_idx = self.iter_hull_volume_by_thresh(sfm_pcd, color_distance_norm, thresh)
                 else:
                     hull_volume = denoised_volume
                     pin_idx = pin_idx[keeped_idx]
-                    print(f"Stop at thresh={thresh} with hull volume = {hull_volume} after denoising")
+                    print(f"    Stop at thresh={thresh} with hull volume = {hull_volume} after denoising")
                     break
             else:
-                print(f"Stop at thresh={thresh} with hull volume = {hull_volume}")
+                print(f"    Stop at thresh={thresh} with hull volume = {hull_volume}")
 
         results_container = {
             "pin_idx": pin_idx,

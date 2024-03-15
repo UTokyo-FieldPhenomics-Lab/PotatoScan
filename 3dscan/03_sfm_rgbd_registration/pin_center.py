@@ -29,7 +29,7 @@ def correct_vector_direction(points, vector, vector_root, colors=None):
     dist2min = abs(start - potato_min)
     dist2max = abs(start - potato_max)
 
-    print(f"st = {start} | ed = {end} | min = {potato_min} | max = {potato_max}")
+    print(f"   st = {start} | ed = {end} | min = {potato_min} | max = {potato_max}")
     # =====debug=====
     # plot in 3d
     # root_on_top_projected_3d= project_points_on_vector(
@@ -232,11 +232,13 @@ def find_minimum_vector_of_bbox(pcd):
 def find_pin_center(pin_pcd, pcd, circle_color=[1,0,0], visualize=False, show=False):
     vector_normalized, plane_point = find_minimum_vector_of_bbox(pin_pcd)
 
+    print(f":: Correct pin vector direction")
+
     # 矫正轴的方向
     pin_vector = correct_vector_direction(
         np.asarray(pcd.points), vector_normalized, plane_point, np.asarray(pcd.colors)
     )
-    print(f"pin vector from {vector_normalized} to {pin_vector}")
+    print(f"   pin vector from {vector_normalized} to {pin_vector}")
 
     # 投影到最短边对应的平面上
     points_3d = np.asarray(pin_pcd.points)

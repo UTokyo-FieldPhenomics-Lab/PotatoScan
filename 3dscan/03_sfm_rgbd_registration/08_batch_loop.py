@@ -86,18 +86,35 @@ if __name__ == "__main__":
             sfm_pin_data['vector_arrow'], rgbd_pin_data['vector_arrow'], 
         ], window_name=f"{pid} - preprocessing")
 
-        ################
-        # ICP aligment #
-        ################
-        imatrix =  util_la.create_rotational_transform_matrix(
-            rgbd_pin_data['circle_center_3d'], rgbd_pin_data['vector'],
-            sfm_pin_data['circle_center_3d'], sfm_pin_data['vector'],
-        )
-
-        search_radius = 0.4
+        ###############################
+        # neighbour vector correction #
+        ###############################
+        search_radius = 0.03
 
         # find the pin neighbour of sfm
-        sfm_nbr_data = find_pin_nbr(sfm_data, sfm_pin_data, search_radius)
+        sfm_nbr_data = find_pin_nbr(sfm_data, sfm_pin_data, search_radius, visualize=True)
+        rgbd_nbr_data = find_pin_nbr(rgbd_data, rgbd_pin_data, search_radius, visualize=True)
+
+        # using the neighbour points to correct the vector
+
+        o3d.visualization.draw_geometries([
+            # initial alignment
+            sfm_nbr_data['nbr_pcd'], rgbd_nbr_data['nbr_pcd'],
+            sfm_nbr_data['vector_arrow'], rgbd_nbr_data['vector_arrow'],
+        ], window_name=f"{pid} - pin neighbour of {search_radius * 100} cm")
+
+        ###################
+        # global aligment #
+        ###################
+
+        # imatrix =  util_la.create_rotational_transform_matrix(
+        #     rgbd_pin_data['circle_center_3d'], rgbd_pin_data['vector'],
+        #     sfm_pin_data['circle_center_3d'], sfm_pin_data['vector'],
+        # )
+        imatrix =  util_la.create_rotational_transform_matrix(
+            rgbd_pin_data['circle_center_3d'], rgbd_nbr_data['nbr_vector'],
+            sfm_pin_data['circle_center_3d'], sfm_nbr_data['nbr_vector'],
+        )
 
         # rotate rgbd according the imatrix to sfm coordinate
         # with _it suffix
@@ -129,10 +146,14 @@ if __name__ == "__main__":
             copy.deepcopy(rgbd_data['pcd']).transform(iimatrix).paint_uniform_color([1,0,0])
         ], window_name=f"{pid} - initial registration")
 
+        ########################
+        # ICP + color aligment #
+        ########################
+
         sfm_pcd_bin = paint_pcd_binary(sfm_data['pcd'], sfm_data['pin_idx'])
         rgbd_pcd_bin = paint_pcd_binary(rgbd_data['pcd'], rgbd_data['pin_idx']) 
 
-        tmatrix = color_based_icp(rgbd_pcd_bin, sfm_pcd_bin, iimatrix, threshold=0.001)
+        tmatrix = color_based_icp(rgbd_pcd_bin, sfm_pcd_bin, iimatrix, threshold=0.001, geometry_weight=0.2)
         
         # visualize frame 2
         rgbd_temp, sfm_temp = draw_registration_result(rgbd_data['pcd'], sfm_data['pcd'], tmatrix, paint_color=False, offset=[0.1,0,0])
@@ -144,6 +165,6 @@ if __name__ == "__main__":
             # rgbd_bin_temp, sfm_bin_temp, 
         ], window_name=f"{pid} - registration")
 
-        print(tmatrix)
+        print(f":: The computered transform matrix: \n{tmatrix}")
 
         break

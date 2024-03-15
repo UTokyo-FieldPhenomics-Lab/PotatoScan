@@ -5,12 +5,13 @@ import copy
 import open3d as o3d
 
 import linear_algebra as util_la
+import pin_center as util_pc
 
 ##############################
 # pin neighbour global align #
 ##############################
 
-def find_pin_nbr(pcd_data_dict, pin_data_dict, radius):
+def find_pin_nbr(pcd_data_dict, pin_data_dict, radius, visualize=False):
     pcd_tree = o3d.geometry.KDTreeFlann(pcd_data_dict['pcd'])
 
     [k1, nbr_idx, _] = pcd_tree.search_radius_vector_3d(
@@ -25,12 +26,29 @@ def find_pin_nbr(pcd_data_dict, pin_data_dict, radius):
 
     nbr_pcd = pcd_data_dict['pcd'].select_by_index(nbr_no_pin_idx)
 
+    # calculate the vector according to the new region.
+    vector_normalized, bbox_center = util_pc.find_minimum_vector_of_bbox(nbr_pcd)
+    # 矫正轴的方向
+    vector_corrected = util_pc.correct_vector_direction(
+        np.asarray(pcd_data_dict['pcd'].points), 
+        vector_normalized, 
+        pin_data_dict['circle_center_3d'], 
+        np.asarray(pcd_data_dict['pcd'].colors)
+    )
     
     results = {
         "nbr_pcd": nbr_pcd,
         "nbr_idx": nbr_no_pin_idx,
         "nbr_radius": radius,
+        "nbr_vector": vector_corrected
     }
+
+    if visualize:
+        # 创建vector的箭头
+        start_point = pin_data_dict['circle_center_3d']
+        vector_arrow = util_pc.create_vector_arrow(start_point, vector_corrected, zoom=0.01, color=[1,1,0])
+
+        results['vector_arrow'] = vector_arrow
 
     return results
 
@@ -61,7 +79,7 @@ def iter_rotation_angle(source_pcd, target_pcd, rotate_axis, rotate_point):
     best_angle = angles[np.argmin(distances)]
     best_rot_matrix = rot_matrices[np.argmin(distances)]
 
-    print(f'find the minimum differences {round(np.min(distances), 7)} on angle {best_angle}')
+    print(f':: Iterative vector axis rotation\n   Find the minimum differences {round(np.min(distances), 7)} on angle {best_angle}')
 
     return best_rot_matrix
 
