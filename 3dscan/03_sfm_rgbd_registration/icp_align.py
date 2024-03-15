@@ -4,50 +4,67 @@ from scipy.spatial.transform import Rotation
 import copy
 import open3d as o3d
 
-##########################
-# pin based global align #
-##########################
-        
-def create_rotational_transform_matrix(p1, n1, p2, n2, rotation_point=None):
-    # 将输入向量标准化
-    N1 = n1 / np.linalg.norm(n1)
-    N2 = n2 / np.linalg.norm(n2)
-    
-    # 计算旋转轴和旋转角度
-    v = np.cross(N1, N2)
-    c = np.dot(N1, N2)
-    s = np.linalg.norm(v)
+import linear_algebra as util_la
 
-    kmat = np.array([
-        [0, -v[2], v[1]], 
-        [v[2], 0, -v[0]], 
-        [-v[1], v[0], 0]
-    ])
-    rotation_matrix = np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2))
+##############################
+# pin neighbour global align #
+##############################
 
-    if rotation_point is None:
-        rotation_point = copy.deepcopy(p1)
+def find_pin_nbr(pcd_data_dict, pin_data_dict, radius):
+    pcd_tree = o3d.geometry.KDTreeFlann(pcd_data_dict['pcd'])
+
+    [k1, nbr_idx, _] = pcd_tree.search_radius_vector_3d(
+        pin_data_dict['circle_center_3d'], radius
+    )
+
+    [k2, nbr_pin_idx, _] = pcd_tree.search_radius_vector_3d(
+        pin_data_dict['circle_center_3d'], pin_data_dict['circle_radius']
+    )
+
+    nbr_no_pin_idx = np.setdiff1d(nbr_idx, nbr_pin_idx)
+
+    nbr_pcd = pcd_data_dict['pcd'].select_by_index(nbr_no_pin_idx)
+
     
-    # 创建平移矩阵以将旋转点移至原点
-    translation_to_origin = np.eye(4)
-    translation_to_origin[:3, 3] = -rotation_point
-    
-    # 创建平移矩阵以将旋转点移回其原始位置
-    translation_back = np.eye(4)
-    translation_back[:3, 3] = rotation_point
-    
-    # 创建旋转矩阵的4x4版本
-    rot_matrix_4x4 = np.eye(4)
-    rot_matrix_4x4[:3, :3] = rotation_matrix
-    
-    # 组合变换：平移到原点，旋转，然后平移回去
-    combined_transform = translation_back @ rot_matrix_4x4 @ translation_to_origin
-    
-    # 计算从P1到P2的平移向量，并将其添加到变换矩阵中
-    translation_vector = p2 - p1
-    combined_transform[:3, 3] += translation_vector
-    
-    return combined_transform
+    results = {
+        "nbr_pcd": nbr_pcd,
+        "nbr_idx": nbr_no_pin_idx,
+        "nbr_radius": radius,
+    }
+
+    return results
+
+def iter_rotation_angle(source_pcd, target_pcd, rotate_axis, rotate_point):
+    angles = []
+    distances = []
+    rot_matrices = []
+    for angle in range(1, 36):
+        rot_matrix = util_la.rotation_matrix_around_vector(rotate_axis, rotate_point, angle*10)
+
+        # rgbd -> to rotate
+        source_rot_vector_pcd = copy.deepcopy(source_pcd).transform(rot_matrix)
+        source_rot_vector_pcd.paint_uniform_color([1,0,0])
+
+        dist = np.mean(
+            source_rot_vector_pcd.compute_point_cloud_distance(target_pcd)
+        )
+
+        angles.append(angle*10)
+        distances.append(dist)
+        rot_matrices.append(rot_matrix)
+
+
+    angles = np.asarray(angles)
+    distances = np.asarray(distances)
+
+    # find the minimum values
+    best_angle = angles[np.argmin(distances)]
+    best_rot_matrix = rot_matrices[np.argmin(distances)]
+
+    print(f'find the minimum differences {round(np.min(distances), 7)} on angle {best_angle}')
+
+    return best_rot_matrix
+
 
 
 ############

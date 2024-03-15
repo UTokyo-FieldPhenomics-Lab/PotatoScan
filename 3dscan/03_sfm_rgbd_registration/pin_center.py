@@ -3,61 +3,9 @@ import open3d as o3d
 import matplotlib.pyplot as plt
 
 from scipy.spatial import ConvexHull
-from scipy.optimize import minimize
-from scipy.spatial.transform import Rotation
-from circle_fit import taubinSVD, hyperLSQ
+from circle_fit import hyperLSQ
 
-from icp_align import create_rotational_transform_matrix
-
-def project_to_plane_vectorized(points, plane_point, plane_normal):
-    # 归一化平面法线
-    plane_normal = plane_normal / np.linalg.norm(plane_normal)
-    
-    # 计算平面的两个基向量
-    if not np.allclose(plane_normal, [1, 0, 0]):
-        u = np.cross(plane_normal, [1, 0, 0])
-    else:
-        u = np.cross(plane_normal, [0, 1, 0])
-    u = u / np.linalg.norm(u)
-    v = np.cross(plane_normal, u)
-    
-    # 计算从平面点到所有点的向量
-    vecs = points - plane_point
-    
-    # 计算这些向量在平面法向量上的投影长度
-    dists = np.dot(vecs, plane_normal).reshape(-1, 1)
-    
-    # 计算三维空间中的投影点
-    proj_points_3d = points - dists * plane_normal
-    
-    # 计算二维平面上的坐标
-    x_coords = np.dot(proj_points_3d - plane_point, u)
-    y_coords = np.dot(proj_points_3d - plane_point, v)
-    
-    points_proj_2d = np.column_stack((x_coords, y_coords))
-    
-    return proj_points_3d, points_proj_2d, (u,v)
-
-def convert_2d_to_3d(points_2d, plane_point, u, v):
-    # 将二维坐标转换为三维坐标
-    points_3d = plane_point + points_2d[:, 0, np.newaxis] * u + points_2d[:, 1, np.newaxis] * v
-    return points_3d
-
-def project_points_on_vector(points, vector, return_1d=False):
-    """
-    把点投影到给定向量上
-    输入：points: nx3的三维点
-         vector: 1x3的向量
-    输出：投影后的点(在空间中的位置)
-    """
-    v_norm = np.sqrt(sum(vector**2))
-
-    v3d = (np.dot(points, vector.reshape(3,1))/v_norm**2)*vector
-
-    if return_1d:
-        return np.sqrt(np.sum(v3d**2, axis=1))
-    else:
-        return v3d
+import linear_algebra as util_la
     
 def correct_vector_direction(points, vector, vector_root, colors=None):
     start_point = vector_root
@@ -65,7 +13,7 @@ def correct_vector_direction(points, vector, vector_root, colors=None):
     # 把start_point & end_point 插入到头部
     root_on_top = np.vstack([start_point.T, end_point.T, points])
 
-    root_on_top_projected = project_points_on_vector(
+    root_on_top_projected = util_la.project_points_on_vector(
         points=root_on_top, 
         vector=vector, 
         return_1d=True
@@ -162,39 +110,6 @@ def fit_circle_to_convex_hull(points_2d, show=False):
         plt.show()
 
     return (xc, yc), r, sigma
-    
-# def create_circle_mesh(center, radius, normal, num_segments=100):
-def create_circle_mesh(center, radius, rotation_matrix, num_segments=100):
-    # 创建圆形的网格
-    points = []
-    indices = []
-    
-    # 中心点
-    points.append(center)
-    # 计算圆周上的点
-    for i in range(num_segments):
-        angle = 2 * np.pi * i / num_segments
-        offset = np.array([np.cos(angle)*radius, np.sin(angle)*radius, 0])
-        # 旋转以匹配法向量方向
-        # R = o3d.geometry.get_rotation_matrix_from_axis_angle(normal)
-        R = rotation_matrix
-        rotated_offset = R.dot(offset)
-        points.append(center + rotated_offset)
-        if i != 0:
-            # 每个三角形的索引
-            indices.append([0, i, i+1])
-    # 最后一个三角形的索引
-    indices.append([0, num_segments, 1])
-    
-    # 创建三角网格
-    mesh = o3d.geometry.TriangleMesh()
-    mesh.vertices = o3d.utility.Vector3dVector(points)
-    mesh.triangles = o3d.utility.Vector3iVector(indices)
-    mesh.compute_vertex_normals()
-
-    mesh_lineset = o3d.geometry.LineSet.create_from_triangle_mesh(mesh)
-    
-    return mesh_lineset
 
 def create_circle_mesh(center_2d, radius, plane_point, uv, num_segments=100, color=[1,0,0]):
     """visualize the regressed circlus of pin in open3d
@@ -236,7 +151,7 @@ def create_circle_mesh(center_2d, radius, plane_point, uv, num_segments=100, col
     indices.append([0, num_segments, 1])
 
     # 转换为3d坐标
-    points = convert_2d_to_3d(np.asarray(points), plane_point, uv[0], uv[1])
+    points = util_la.convert_2d_to_3d(np.asarray(points), plane_point, uv[0], uv[1])
     
     # 创建三角网格
     mesh = o3d.geometry.TriangleMesh()
@@ -270,7 +185,7 @@ def create_vector_arrow(start_point, vector_normal, zoom=0.01, color=None):
     z_axis = np.array([0, 0, 1])
     o= np.array([0, 0, 0])
 
-    matrix = create_rotational_transform_matrix(o, z_axis, start_point, vector_normal)
+    matrix = util_la.create_rotational_transform_matrix(o, z_axis, start_point, vector_normal)
 
     # vector = vector_normal * zoom
     # cross_prod = np.cross(z_axis, vector)
@@ -325,13 +240,13 @@ def find_pin_center(pin_pcd, pcd, circle_color=[1,0,0], visualize=False, show=Fa
 
     # 投影到最短边对应的平面上
     points_3d = np.asarray(pin_pcd.points)
-    points_proj_3d, points_proj_2d, uv = project_to_plane_vectorized(points_3d, plane_point, pin_vector)
+    points_proj_3d, points_proj_2d, uv = util_la.project_to_plane_vectorized(points_3d, plane_point, pin_vector)
 
     # 计算2D点集的凸包，并拟合圆
     circle_center_2d, circle_radius, sigma = fit_circle_to_convex_hull(points_proj_2d, show)
 
     # 将2D圆心转换回3D空间坐标
-    circle_center_3d = convert_2d_to_3d(np.asarray([circle_center_2d]), plane_point, uv[0], uv[1])
+    circle_center_3d = util_la.convert_2d_to_3d(np.asarray([circle_center_2d]), plane_point, uv[0], uv[1])
     circle_center_3d = circle_center_3d[0]
 
     results = {
