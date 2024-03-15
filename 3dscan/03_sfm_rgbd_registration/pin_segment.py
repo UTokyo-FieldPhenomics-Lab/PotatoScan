@@ -222,7 +222,7 @@ class RgbdPinFetcher(object):
             idx_temp = np.where(distance == 0)[0]
 
             if idx_temp:
-                pin_idx.append(idx_temp)
+                pin_idx.append(idx_temp[0])
 
         if show:
             o3d.visualization.draw_geometries([pcd, pin_pcd])
@@ -230,7 +230,7 @@ class RgbdPinFetcher(object):
         results = {
             'pcd': pcd,
             'pin_pcd': pin_pcd,
-            'pin_idx': pin_idx
+            'pin_idx': np.asarray(pin_idx)
         }
 
         return results
