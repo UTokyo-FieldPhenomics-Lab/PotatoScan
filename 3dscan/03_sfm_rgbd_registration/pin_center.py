@@ -7,6 +7,7 @@ from scipy.optimize import minimize
 from scipy.spatial.transform import Rotation
 from circle_fit import taubinSVD, hyperLSQ
 
+from icp_align import create_rotational_transform_matrix
 
 def project_to_plane_vectorized(points, plane_point, plane_normal):
     # 归一化平面法线
@@ -58,7 +59,7 @@ def project_points_on_vector(points, vector, return_1d=False):
     else:
         return v3d
     
-def correct_vector_direction(points, vector, vector_root, colors):
+def correct_vector_direction(points, vector, vector_root, colors=None):
     start_point = vector_root
     end_point = vector_root + vector/100
     # 把start_point & end_point 插入到头部
@@ -250,11 +251,51 @@ def create_circle_mesh(center_2d, radius, plane_point, uv, num_segments=100, col
     
     return mesh_lineset
 
-def find_pin_center(pin_pcd, pcd, circle_color=[1,0,0], visualize=False, show=False):
-    pin_hull, hull_idx = pin_pcd.compute_convex_hull()
-    
+def create_vector_arrow(start_point, vector_normal, zoom=0.01, color=None):
+    arrow = o3d.geometry.TriangleMesh.create_arrow(
+        cone_radius=0.1 * zoom,
+        cone_height=0.3 * zoom,
+        cylinder_radius=0.05 * zoom,
+        cylinder_height=0.7 * zoom
+    )
+    # arrow.scale(zoom, center=arrow.get_center())
+
+    if color is not None:
+        arrow = arrow.paint_uniform_color(color)
+
+
+    # 确定箭头方向
+    # 计算箭头的变换矩阵，使其从z轴对齐到向量方向
+    # 这涉及到计算两个向量间的旋转矩阵
+    z_axis = np.array([0, 0, 1])
+    o= np.array([0, 0, 0])
+
+    matrix = create_rotational_transform_matrix(o, z_axis, start_point, vector_normal)
+
+    # vector = vector_normal * zoom
+    # cross_prod = np.cross(z_axis, vector)
+    # dot_prod = np.dot(z_axis, vector)
+    # s = np.linalg.norm(cross_prod)
+    # c = dot_prod
+    # skew_symmetric = np.array([[0, -cross_prod[2], cross_prod[1]],
+    #                         [cross_prod[2], 0, -cross_prod[0]],
+    #                         [-cross_prod[1], cross_prod[0], 0]])
+    # rotation_matrix = np.eye(3) + skew_symmetric + skew_symmetric.dot(skew_symmetric) * ((1 - c) / (s ** 2))
+
+    # 构建4x4变换矩阵
+    # transformation_matrix = np.eye(4)
+    # transformation_matrix[:3, :3] = rotation_matrix
+    # transformation_matrix[:3, 3] = start_point
+
+    # 应用变换
+    arrow = arrow.transform(matrix)
+
+    return arrow
+
+def find_minimum_vector_of_bbox(pcd):
+    hull, hull_idx = pcd.compute_convex_hull()
     # get bounding box size
-    hull_obb = pin_hull.get_oriented_bounding_box()
+    hull_obb = hull.get_oriented_bounding_box()
 
     # 获取边界框的三个轴的长度
     extents = hull_obb.extent
@@ -265,16 +306,22 @@ def find_pin_center(pin_pcd, pcd, circle_color=[1,0,0], visualize=False, show=Fa
 
     # 获取对应于最短边的轴
     _min_extent_vector = hull_obb.R[:, min_extent_idx]
-    _min_extent_vector = _min_extent_vector / np.linalg.norm(_min_extent_vector)
+    min_extent_vector_norm = _min_extent_vector / np.linalg.norm(_min_extent_vector)
 
     # 获取边界框的中心，作为平面上的一个点
     plane_point = hull_obb.center
 
+    return min_extent_vector_norm, plane_point
+
+
+def find_pin_center(pin_pcd, pcd, circle_color=[1,0,0], visualize=False, show=False):
+    vector_normalized, plane_point = find_minimum_vector_of_bbox(pin_pcd)
+
     # 矫正轴的方向
     pin_vector = correct_vector_direction(
-        np.asarray(pcd.points), _min_extent_vector, plane_point, np.asarray(pcd.colors)
+        np.asarray(pcd.points), vector_normalized, plane_point, np.asarray(pcd.colors)
     )
-    print(f"pin vector from {_min_extent_vector} to {pin_vector}")
+    print(f"pin vector from {vector_normalized} to {pin_vector}")
 
     # 投影到最短边对应的平面上
     points_3d = np.asarray(pin_pcd.points)
@@ -303,22 +350,25 @@ def find_pin_center(pin_pcd, pcd, circle_color=[1,0,0], visualize=False, show=Fa
         # 创建一个圆形网格
         circle_mesh = create_circle_mesh(circle_center_2d, circle_radius, plane_point, uv, color=circle_color)
 
+        vector_arrow = create_vector_arrow(
+            circle_center_3d, pin_vector, 
+            zoom=0.01, color=circle_color)  # zoom to 1 cm
         # 创建vector的箭头
-        # normal_vector = pin_vector / np.linalg.norm(pin_vector)
-        end_point = circle_center_3d + pin_vector / 100 # to 1 cm
-        lineset = o3d.geometry.LineSet()
-        # 设置点（两个点：起点和终点）
-        lineset.points = o3d.utility.Vector3dVector([circle_center_3d, end_point])
-        # 设置线（一条线从点0到点1）
-        lineset.lines = o3d.utility.Vector2iVector([[0, 1]])
-        lineset.colors = o3d.utility.Vector3dVector([circle_color])
+        # end_point = circle_center_3d + pin_vector / 100 # to 1 cm
+        # lineset = o3d.geometry.LineSet()
+        # # 设置点（两个点：起点和终点）
+        # lineset.points = o3d.utility.Vector3dVector([circle_center_3d, end_point])
+        # # 设置线（一条线从点0到点1）
+        # lineset.lines = o3d.utility.Vector2iVector([[0, 1]])
+        # lineset.colors = o3d.utility.Vector3dVector([circle_color])
 
 
         if show:
-            o3d.visualization.draw_geometries([circle_mesh, pin_pcd, hull_obb, projected_cloud, lineset])
+            o3d.visualization.draw_geometries([circle_mesh, pin_pcd, projected_cloud, vector_arrow])
 
         results['projected_cloud'] = projected_cloud
         results['circle_mesh'] = circle_mesh
-        results['vector_lineset'] = lineset
+        results['vector_arrow'] = vector_arrow
+        # results['vector_lineset'] = lineset
 
     return results

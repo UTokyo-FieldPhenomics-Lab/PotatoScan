@@ -1,19 +1,6 @@
 import pathlib
-import numpy as np
-import skimage
-import plotly.graph_objects as go
-
-from scipy.spatial import ConvexHull
-
-import matplotlib.pyplot as plt
-from matplotlib.path import Path as pltpath
-from matplotlib.gridspec import GridSpec
-from matplotlib.colors import ListedColormap
-import matplotlib.colors as mcolors
-import matplotlib.cm as mcm
 
 import argparse
-
 
 import open3d as o3d
 import copy
@@ -76,8 +63,12 @@ if __name__ == "__main__":
             circle_color=[0,0,0], visualize=True, show=False
         )
 
+
         # show frame 1
+        coord = o3d.geometry.TriangleMesh.create_coordinate_frame()
+        coord.scale(0.01, center=coord.get_center())
         o3d.visualization.draw_geometries([
+            coord,
             #sfm & rgbd raw data
             sfm_data['pcd'], rgbd_data['pcd'],
             # pin segmetation result (with color strength)
@@ -87,7 +78,7 @@ if __name__ == "__main__":
             # regressed circle
             sfm_pin_data['circle_mesh'], rgbd_pin_data['circle_mesh'],
             # circle plane normal
-            sfm_pin_data['vector_lineset'], rgbd_pin_data['vector_lineset'], 
+            sfm_pin_data['vector_arrow'], rgbd_pin_data['vector_arrow'], 
         ], window_name=f"{pid} - preprocessing")
 
         ################
@@ -98,18 +89,21 @@ if __name__ == "__main__":
             sfm_pin_data['circle_center_3d'], sfm_pin_data['vector'],
         )
 
-        sfm_pcd_bin = paint_pcd_binary(sfm_data['pcd'], sfm_data['pin_idx'])
-        rgbd_pcd_bin = paint_pcd_binary(rgbd_data['pcd'], rgbd_data['pin_idx']) 
-
-        tmatrix = color_based_icp(rgbd_pcd_bin, sfm_pcd_bin, imatrix, threshold=1)
-        
-        # visualize frame 2
-        rgbd_temp, sfm_temp = draw_registration_result(rgbd_data['pcd'], sfm_data['pcd'], tmatrix, paint_color=False, offset=[0.1,0,0])
-        rgbd_bin_temp, sfm_bin_temp = draw_registration_result(rgbd_pcd_bin, sfm_pcd_bin, tmatrix, paint_color=False, offset=[0.1,0.1,0])
-
         o3d.visualization.draw_geometries([
             # initial alignment
             sfm_data['pcd'], copy.deepcopy(rgbd_data['pcd']).transform(imatrix),
+        ], window_name=f"{pid} - initial registration")
+
+        sfm_pcd_bin = paint_pcd_binary(sfm_data['pcd'], sfm_data['pin_idx'])
+        rgbd_pcd_bin = paint_pcd_binary(rgbd_data['pcd'], rgbd_data['pin_idx']) 
+
+        tmatrix = color_based_icp(rgbd_pcd_bin, sfm_pcd_bin, imatrix, threshold=0.05)
+        
+        # visualize frame 2
+        rgbd_temp, sfm_temp = draw_registration_result(rgbd_data['pcd'], sfm_data['pcd'], tmatrix, paint_color=False, offset=[0.1,0,0])
+        # rgbd_bin_temp, sfm_bin_temp = draw_registration_result(rgbd_pcd_bin, sfm_pcd_bin, tmatrix, paint_color=False, offset=[0.1,0.1,0])
+
+        o3d.visualization.draw_geometries([
             # after alignment
             rgbd_temp, sfm_temp, 
             # rgbd_bin_temp, sfm_bin_temp, 
