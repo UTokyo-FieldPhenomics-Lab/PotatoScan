@@ -8,36 +8,25 @@ import open3d as o3d
 # pin based global align #
 ##########################
         
-def create_rotational_transform_matrix(P1, N1, P2, N2, rotation_point=None):
+def create_rotational_transform_matrix(p1, n1, p2, n2, rotation_point=None):
     # 将输入向量标准化
-    N1 = N1 / np.linalg.norm(N1)
-    N2 = N2 / np.linalg.norm(N2)
+    N1 = n1 / np.linalg.norm(n1)
+    N2 = n2 / np.linalg.norm(n2)
     
     # 计算旋转轴和旋转角度
-    cross_product = np.cross(N1, N2)
-    dot_product = np.dot(N1, N2)
+    v = np.cross(N1, N2)
+    c = np.dot(N1, N2)
+    s = np.linalg.norm(v)
+
+    kmat = np.array([
+        [0, -v[2], v[1]], 
+        [v[2], 0, -v[0]], 
+        [-v[1], v[0], 0]
+    ])
+    rotation_matrix = np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2))
 
     if rotation_point is None:
-        rotation_point = P1
-    
-    # 当两个向量平行时，叉积为零
-    if np.allclose(cross_product, 0):
-        # 如果点积为-1，向量相反，需要绕垂直于这些向量的轴旋转180度
-        if np.isclose(dot_product, -1):
-            # 选择一个与N1垂直的轴作为旋转轴
-            perp_vector = np.array([1, 0, 0]) if abs(N1[0]) < abs(N1[1]) else np.array([0, 1, 0])
-            rotation_axis = np.cross(N1, perp_vector)
-            rotation_angle = np.pi
-        else:
-            # 向量重合，无需旋转
-            rotation_axis = [1, 0, 0]  # 默认轴
-            rotation_angle = 0
-    else:
-        rotation_axis = cross_product
-        rotation_angle = np.arccos(dot_product)
-    
-    # 使用scipy来构建旋转矩阵
-    rotation_matrix = Rotation.from_rotvec(rotation_axis * rotation_angle).as_matrix()
+        rotation_point = copy.deepcopy(p1)
     
     # 创建平移矩阵以将旋转点移至原点
     translation_to_origin = np.eye(4)
@@ -55,7 +44,7 @@ def create_rotational_transform_matrix(P1, N1, P2, N2, rotation_point=None):
     combined_transform = translation_back @ rot_matrix_4x4 @ translation_to_origin
     
     # 计算从P1到P2的平移向量，并将其添加到变换矩阵中
-    translation_vector = P2 - P1
+    translation_vector = p2 - p1
     combined_transform[:3, 3] += translation_vector
     
     return combined_transform
