@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+import matplotlib.pyplot as plt
+
 import copy
 import open3d as o3d
 
@@ -79,10 +81,12 @@ def iter_rotation_angle(source_pcd, target_pcd, rotate_axis, rotate_point):
     best_angle = angles[np.argmin(distances)]
     best_rot_matrix = rot_matrices[np.argmin(distances)]
 
+    plt.plot(angles, distances)
+    plt.show()
+
     print(f':: Iterative vector axis rotation\n   Find the minimum differences {round(np.min(distances), 7)} on angle {best_angle}')
 
     return best_rot_matrix
-
 
 
 ############
@@ -120,7 +124,7 @@ def paint_pcd_binary(pcd, pin_idx):
 
 def color_based_icp(
         source_binary_pcd, target_binary_pcd, initial_matrix, 
-        voxel_size=0.001, geometry_weight=0.3, threshold=0.002
+        voxel_size=0.001, geometry_weight=0.3, threshold=0.002, max_iter=2000
     ):
     """_summary_
 
@@ -156,7 +160,7 @@ def color_based_icp(
     result_icp = o3d.pipelines.registration.registration_colored_icp(
         source_pcd_down, target_pcd_down, threshold, np.identity(4),
         o3d.pipelines.registration.TransformationEstimationForColoredICP(lambda_geometric=geometry_weight), # weight of color, smaller means color more important
-        o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=2000),
+        o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=max_iter),
     )
     
     return result_icp.transformation @ initial_matrix

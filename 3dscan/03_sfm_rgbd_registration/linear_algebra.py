@@ -4,17 +4,22 @@ import numpy as np
 # mv from pin_center.py #
 #########################
 
-def project_to_plane_vectorized(points, plane_point, plane_normal):
+def calculate_normal_uv(vector):
     # 归一化平面法线
-    plane_normal = plane_normal / np.linalg.norm(plane_normal)
+    normal_vector = vector / np.linalg.norm(vector)
     
     # 计算平面的两个基向量
-    if not np.allclose(plane_normal, [1, 0, 0]):
-        u = np.cross(plane_normal, [1, 0, 0])
+    if not np.allclose(normal_vector, [1, 0, 0]):
+        u = np.cross(normal_vector, [1, 0, 0])
     else:
-        u = np.cross(plane_normal, [0, 1, 0])
+        u = np.cross(normal_vector, [0, 1, 0])
     u = u / np.linalg.norm(u)
-    v = np.cross(plane_normal, u)
+    v = np.cross(normal_vector, u)
+
+    return u, v
+
+def project_to_plane_vectorized(points, plane_point, plane_normal):
+    u, v = calculate_normal_uv(plane_normal)
     
     # 计算从平面点到所有点的向量
     vecs = points - plane_point

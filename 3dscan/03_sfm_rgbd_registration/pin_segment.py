@@ -10,6 +10,8 @@ import pandas as pd
 import copy
 import json
 
+from skimage.morphology import erosion, disk
+
 # sfm fetcher
 import matplotlib.pyplot as plt
 import skimage
@@ -104,7 +106,7 @@ class PinRegions:
         return mask_img
 
 
-    def process_pcd(self, img, dimg, bin_potato, bin_pin, name, gt_depth, visualize=False):
+    def process_pcd(self, img, dimg, bin_potato, bin_pin, name, gt_depth, paint_color=False, visualize=False):
         img_potato = np.multiply(img, np.expand_dims(bin_potato, axis=2))
         dimg_potato = np.multiply(dimg, bin_potato)
         dimg_potato_vis = dimg_potato.astype(np.uint8)
@@ -126,7 +128,8 @@ class PinRegions:
         depth_pin = o3d.geometry.Image(dimg_pin)
         rgbd_pin = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb_pin, depth_pin, depth_scale=1000.0, depth_trunc=0.4, convert_rgb_to_intensity=False)
         pcd_pin = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_pin, self.intrinsics)
-        pcd_pin.paint_uniform_color([1, 1, 0])
+        if paint_color:
+            pcd_pin.paint_uniform_color([1, 1, 0])
 
         if visualize:
             pcd_potato_vis = pcd_potato.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
@@ -209,7 +212,7 @@ class RgbdPinFetcher(object):
         self.centered_img = self.find_center_img(img_infos, img_height=720)
 
     def get(self, potato_id, visualize=False, show=False):
-        pcd, pin_pcd = self.get_pcd_pin(self.pr, self.centered_img, potato_id)
+        pcd, pin_pcd, pcd_ero = self.get_pcd_pin(self.pr, self.centered_img, potato_id)
 
         pcd_xyz = np.asarray(pcd.points)
         pin_pcd_xyz = np.asarray(pin_pcd.points)
@@ -230,7 +233,8 @@ class RgbdPinFetcher(object):
         results = {
             'pcd': pcd,
             'pin_pcd': pin_pcd,
-            'pin_idx': np.asarray(pin_idx)
+            'pin_idx': np.asarray(pin_idx),
+            'pcd_ero': pcd_ero
         }
 
         return results
@@ -320,16 +324,24 @@ class RgbdPinFetcher(object):
             bin_pin = pin_mask.astype(bool)
             bin_mask = mask.astype(bool)
 
-            pcd_pin = pr.process_pcd(
-                img, dimg, bin_mask, bin_pin, 
-                name=ann_ids, gt_depth=gt_depth)
+            # remove the boundary fly overs
+            footprint = disk(6)
+            bin_mask_eros = erosion(bin_mask, footprint)
 
+            pcd_pin = pr.process_pcd(
+                img, dimg, bin_mask, bin_pin, paint_color=True,
+                name=ann_ids, gt_depth=gt_depth)
+            
+            pcd_ero = pr.process_pcd(
+                img, dimg, bin_mask, bin_mask_eros, paint_color=False, 
+                name=ann_ids, gt_depth=gt_depth)
+            
         # read the source image
         pcd_file = centered_img[potato_id]['rgb'].replace('rgb', 'pcd').replace('.png', '.ply')
         pcd_path = pr.img_root / f"../2_pcd" / pcd_file
         pcd = o3d.io.read_point_cloud(str(pcd_path.resolve()))
 
-        return pcd, pcd_pin
+        return pcd, pcd_pin, pcd_ero
     
 ###########
 # SfM Pin #
@@ -433,7 +445,7 @@ class SfMPinFetcher():
         visualize=False, show=False
     ):
         # get the sfm pcd
-        sfm_pcd_path = sfm_pcd_folder / f"{potato_id}_30000.ply"
+        sfm_pcd_path = sfm_pcd_folder / potato_id / f"{potato_id}_30000.ply"
         sfm_pcd = o3d.io.read_point_cloud( str(sfm_pcd_path) )
 
         colors = np.asarray(sfm_pcd.colors)

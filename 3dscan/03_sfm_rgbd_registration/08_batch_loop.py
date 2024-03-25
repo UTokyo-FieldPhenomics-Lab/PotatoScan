@@ -29,9 +29,9 @@ if __name__ == "__main__":
     id_folder = dataset_root / "2_sfm/2_pcd"
     pid_container = []
     for x in id_folder.glob('**/*'):
-        if x.is_file():
+        if not x.is_file():  # is folder
             pid_container.append(
-                x.name.replace('_30000.ply', '')
+                x.name
             )
 
     matrix_out_folder = dataset_root / "03_pair/01_tmatrix"
@@ -68,7 +68,6 @@ if __name__ == "__main__":
             circle_color=[0,0,0], visualize=True, show=False
         )
 
-
         # show frame 1
         coord = o3d.geometry.TriangleMesh.create_coordinate_frame()
         coord.scale(0.01, center=coord.get_center())
@@ -96,7 +95,6 @@ if __name__ == "__main__":
         rgbd_nbr_data = find_pin_nbr(rgbd_data, rgbd_pin_data, search_radius, visualize=True)
 
         # using the neighbour points to correct the vector
-
         o3d.visualization.draw_geometries([
             # initial alignment
             sfm_nbr_data['nbr_pcd'], rgbd_nbr_data['nbr_pcd'],
@@ -107,14 +105,14 @@ if __name__ == "__main__":
         # global aligment #
         ###################
 
-        # imatrix =  util_la.create_rotational_transform_matrix(
-        #     rgbd_pin_data['circle_center_3d'], rgbd_pin_data['vector'],
-        #     sfm_pin_data['circle_center_3d'], sfm_pin_data['vector'],
-        # )
         imatrix =  util_la.create_rotational_transform_matrix(
-            rgbd_pin_data['circle_center_3d'], rgbd_nbr_data['nbr_vector'],
-            sfm_pin_data['circle_center_3d'], sfm_nbr_data['nbr_vector'],
+            rgbd_pin_data['circle_center_3d'], rgbd_pin_data['vector'],
+            sfm_pin_data['circle_center_3d'], sfm_pin_data['vector'],
         )
+        # imatrix =  util_la.create_rotational_transform_matrix(
+        #     rgbd_pin_data['circle_center_3d'], rgbd_nbr_data['nbr_vector'],
+        #     sfm_pin_data['circle_center_3d'], sfm_nbr_data['nbr_vector'],
+        # )
 
         # rotate rgbd according the imatrix to sfm coordinate
         # with _it suffix
@@ -153,7 +151,9 @@ if __name__ == "__main__":
         sfm_pcd_bin = paint_pcd_binary(sfm_data['pcd'], sfm_data['pin_idx'])
         rgbd_pcd_bin = paint_pcd_binary(rgbd_data['pcd'], rgbd_data['pin_idx']) 
 
-        tmatrix = color_based_icp(rgbd_pcd_bin, sfm_pcd_bin, iimatrix, threshold=0.001, geometry_weight=0.2)
+        # o3d.visualization.draw_geometries([sfm_pcd_bin, rgbd_pcd_bin])
+
+        tmatrix = color_based_icp(rgbd_pcd_bin, sfm_pcd_bin, iimatrix, threshold=0.0002, max_iter=10)
         
         # visualize frame 2
         rgbd_temp, sfm_temp = draw_registration_result(rgbd_data['pcd'], sfm_data['pcd'], tmatrix, paint_color=False, offset=[0.1,0,0])
