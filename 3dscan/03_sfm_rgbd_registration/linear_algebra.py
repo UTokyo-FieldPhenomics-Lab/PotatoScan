@@ -141,3 +141,19 @@ def rotation_matrix_around_vector(axis, rotation_point, theta_deg):
     combined_transform = translation_back @ rot_matrix_4x4 @ translation_to_origin
 
     return combined_transform
+
+#########################
+# 09_icp_by_cross.ipynb #
+#########################
+
+def point_to_plane_distance(points, plane_point, plane_normal):
+    # 计算点云到面的距离
+    distances = np.abs(np.dot(points - plane_point, plane_normal)) / np.linalg.norm(plane_normal)
+    return distances
+
+def compute_distance_rmse(source_pcd, target_pcd):
+    errors = np.asarray(
+        source_pcd.compute_point_cloud_distance(target_pcd)
+    )
+    rmse = np.sqrt(np.mean(errors ** 2))
+    return rmse

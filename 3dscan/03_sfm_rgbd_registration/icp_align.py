@@ -77,16 +77,18 @@ def iter_rotation_angle(source_pcd, target_pcd, rotate_axis, rotate_point):
     angles = np.asarray(angles)
     distances = np.asarray(distances)
 
-    # find the minimum values
-    best_angle = angles[np.argmin(distances)]
-    best_rot_matrix = rot_matrices[np.argmin(distances)]
+    return angles, distances, rot_matrices
 
-    plt.plot(angles, distances)
-    plt.show()
+    # # find the minimum values
+    # best_angle = angles[np.argmin(distances)]
+    # best_rot_matrix = rot_matrices[np.argmin(distances)]
 
-    print(f':: Iterative vector axis rotation\n   Find the minimum differences {round(np.min(distances), 7)} on angle {best_angle}')
+    # plt.plot(angles, distances)
+    # plt.show()
 
-    return best_rot_matrix
+    # print(f':: Iterative vector axis rotation\n   Find the minimum differences {round(np.min(distances), 7)} on angle {best_angle}')
+
+    # return best_rot_matrix
 
 
 ############
