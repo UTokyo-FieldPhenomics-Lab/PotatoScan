@@ -459,7 +459,8 @@ class SfMPinFetcher():
         need_hue_reverse = color_distance_diff[:,0] > 0.5
         color_distance_diff[need_hue_reverse, 0] = 1 - color_distance_diff[need_hue_reverse, 0]
 
-        color_distance_weight = color_distance_diff * np.array([0.5,0.1,0.3])  # hsv weight
+        HSV_WEIGHT = [0.5,0.1,0.3]
+        color_distance_weight = color_distance_diff * np.array(HSV_WEIGHT)  # hsv weight
         color_distance = color_distance_weight.sum(axis=1)
 
         # 定义一个Normalize对象，用于将数据值归一化到[0, 1]的范围
@@ -479,7 +480,7 @@ class SfMPinFetcher():
             hull_volume, pin_idx = self.iter_hull_volume_by_thresh(sfm_pcd, color_distance_norm, thresh)
 
             while hull_volume > 60:
-                print(f"    Thresh={thresh} get pin convex hull volumn {hull_volume} > 60, denoise first")
+                print(f"   Thresh={thresh} get pin convex hull volumn {hull_volume} > 60, denoise first")
                 pin_pcd = sfm_pcd.select_by_index(pin_idx)
                 keeped, keeped_idx = pin_pcd.remove_radius_outlier(nb_points=nb_points, radius=radius)
 
@@ -495,14 +496,17 @@ class SfMPinFetcher():
                 else:
                     hull_volume = denoised_volume
                     pin_idx = pin_idx[keeped_idx]
-                    print(f"    Stop at thresh={thresh} with hull volume = {hull_volume} after denoising")
+                    print(f"   Stop at thresh={thresh} with hull volume = {hull_volume} after denoising")
                     break
             else:
-                print(f"    Stop at thresh={thresh} with hull volume = {hull_volume}")
+                print(f"   Stop at thresh={thresh} with hull volume = {hull_volume}")
 
         results_container = {
             "pin_idx": pin_idx,
-            "pcd": sfm_pcd
+            "pcd": sfm_pcd,
+            "stop_thresh": thresh,
+            "stop_hull_volume": hull_volume,
+            "hsv_weight": HSV_WEIGHT,
         }
 
         if visualize or show:

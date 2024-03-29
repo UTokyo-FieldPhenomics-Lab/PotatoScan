@@ -126,7 +126,8 @@ def paint_pcd_binary(pcd, pin_idx):
 
 def color_based_icp(
         source_binary_pcd, target_binary_pcd, initial_matrix, 
-        voxel_size=0.001, geometry_weight=0.3, threshold=0.002, max_iter=2000
+        voxel_size=0.001, geometry_weight=0.3, threshold=0.002, max_iter=2000,
+        return_rmse=False
     ):
     """_summary_
 
@@ -164,6 +165,9 @@ def color_based_icp(
         o3d.pipelines.registration.TransformationEstimationForColoredICP(lambda_geometric=geometry_weight), # weight of color, smaller means color more important
         o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=max_iter),
     )
-    
-    return result_icp.transformation @ initial_matrix
+
+    if return_rmse:
+        return result_icp.transformation @ initial_matrix, result_icp.inlier_rmse
+    else:
+        return result_icp.transformation @ initial_matrix
 

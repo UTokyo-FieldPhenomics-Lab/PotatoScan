@@ -76,7 +76,7 @@ def iterative_uv_rotate_one(source_pcd, target_pcd, rotate_point, rotate_vector,
     best_angle = angles[best_idx]
     best_matrix = matrics[best_idx]
 
-    print(f"Minimum rMSE {rmses[best_idx]} at angle={best_angle}")
+    # print(f"Minimum rMSE {rmses[best_idx]} at angle={best_angle}")
 
     if ax is not None:
         # change the selected color
@@ -98,7 +98,7 @@ def iterative_uv_rotate_one(source_pcd, target_pcd, rotate_point, rotate_vector,
 
     return out
 
-def iterative_nuv_rotate(source_pcd, target_pcd, rotate_point, normal_vector):
+def iterative_nuv_rotate(source_pcd, target_pcd, rotate_point, normal_vector, buffer=0.001):
     n = normal_vector
     u,v = util_la.calculate_normal_uv(n)
 
@@ -106,7 +106,7 @@ def iterative_nuv_rotate(source_pcd, target_pcd, rotate_point, normal_vector):
         target_pcd, 
         plane_point=rotate_point,
         plane_normal=n,
-        buffer=0.001,
+        buffer=buffer,
         merge=False
     )
 
@@ -142,9 +142,9 @@ def iterative_nuv_rotate(source_pcd, target_pcd, rotate_point, normal_vector):
         matrics.append(optimized_rotate_matrix)
         angles.append(angle * 10)
 
-        print(f"- Rotate {angle * 10} | RMSE={rmse}")
+        # print(f"- Rotate {angle * 10} | RMSE={rmse}")
 
     angles = np.asarray(angles)
     rmses = np.asarray(rmses)
-    
+
     return angles, rmses, matrics

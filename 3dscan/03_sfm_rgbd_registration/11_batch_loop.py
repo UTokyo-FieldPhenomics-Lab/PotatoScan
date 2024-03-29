@@ -4,10 +4,11 @@ import argparse
 
 import open3d as o3d
 import copy
+import json
 
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
+from matplotlib import colormaps as cm
 import matplotlib
 
 # # TkAgg
@@ -18,59 +19,20 @@ matplotlib.use('QtAgg')
 
 from scipy.signal import find_peaks
 
-from PyQt5.QtWidgets import QApplication, QMessageBox
+from PyQt5.QtWidgets import QApplication
 
 from pin_segment import RgbdPinFetcher, SfMPinFetcher
 import linear_algebra as util_la
 import cross_align as util_ca
 import pin_center as util_pc
 import icp_align as util_ia
+import qtmessagebox as util_qt
+from jsonfile import dict2json
 
 parser = argparse.ArgumentParser(description="Batch script for checking Transform Matrix")
 parser.add_argument('-o', '--overwrite', default=False, action='store_true', help='overwrite existing matrix')
 parser.add_argument('-i', '--id', default=None, help="specify potato id")
 
-def confirm_message(title, text):
-    # 创建一个消息框
-    msg = QMessageBox()
-    msg.setIcon(QMessageBox.Question)
-    msg.setWindowTitle(title)
-    msg.setText(text)
-    # 添加按钮
-    ok_button = msg.addButton('Yes', QMessageBox.AcceptRole)
-    next_button = msg.addButton('Next', QMessageBox.RejectRole)
-    # 显示消息框
-    msg.exec_()
-    # 判断用户点击了哪个按钮并返回
-    if msg.clickedButton() == ok_button:
-        return True
-    elif msg.clickedButton() == next_button:
-        return False
-    else:
-        return None
-
-
-def iter_num_message(title, text):
-    # 创建一个消息框
-    msg = QMessageBox()
-    msg.setIcon(QMessageBox.Question)
-    msg.setWindowTitle(title)
-    msg.setText(text)
-    # 添加按钮
-    l_button = msg.addButton('-5', QMessageBox.AcceptRole)
-    m_button = msg.addButton('OK', QMessageBox.RejectRole)
-    r_button = msg.addButton('+5', QMessageBox.RejectRole)
-    # 显示消息框
-    msg.exec_()
-    # 判断用户点击了哪个按钮并返回
-    if msg.clickedButton() == l_button:
-        return -1
-    elif msg.clickedButton() == m_button:
-        return 0
-    elif msg.clickedButton() == r_button:
-        return 1
-    else:
-        return None
 
 if __name__ == "__main__":
     app = QApplication([])
@@ -89,7 +51,7 @@ if __name__ == "__main__":
                 x.name
             )
 
-    matrix_out_folder = dataset_root / "03_pair/01_tmatrix"
+    matrix_out_folder = dataset_root / "3_pair/tmatrix"
     mat_container = []
     for x in matrix_out_folder.glob('**/*'):
         if x.is_file():
@@ -113,6 +75,8 @@ if __name__ == "__main__":
 
         rgbd_data = rgbd_fetcher.get(pid, visualize=True, show=False)
         sfm_data = sfm_fetcher.get(pid, visualize=True, show=False)
+
+        print(f"=> Find pin vector")
         
         sfm_pin_data = util_pc.find_pin_center(
             sfm_data['pin_pcd'], sfm_data['pcd'], 
@@ -138,12 +102,14 @@ if __name__ == "__main__":
             sfm_pin_data['circle_mesh'], rgbd_pin_data['circle_mesh'],
             # circle plane normal
             sfm_pin_data['vector_arrow'], rgbd_pin_data['vector_arrow'], 
-        ], window_name=f"{pid} - preprocessing")
+        ], window_name=f"{pid} - pin segmentation for center and normal")
 
         ###############################
         # neighbour vector correction #
         ###############################
         search_radius = 0.03
+
+        print(f"=> Find neighbor point cloud with {search_radius*100} cm radius")
 
         # find the pin neighbour of sfm
         sfm_nbr_data = util_ia.find_pin_nbr(sfm_data, sfm_pin_data, search_radius, visualize=True)
@@ -159,6 +125,8 @@ if __name__ == "__main__":
         ###################
         # global aligment #
         ###################
+
+        print(f"=> Rough alignment matrix by pin position")
 
         imatrix = util_la.create_rotational_transform_matrix(
             rgbd_pin_data['circle_center_3d'], rgbd_pin_data['vector'],
@@ -185,11 +153,14 @@ if __name__ == "__main__":
         #===========================
         # align by latest n-u-v iter
         #===========================
+        cross_buffer = 0.001
+        print(f":: iterative optimize rotating around pin normal vector")
         angles, rmses, matrics = util_ca.iterative_nuv_rotate(
             source_pcd    = rgbd_nbr_data_it['nbr_pcd'],
             target_pcd    = sfm_nbr_data['nbr_pcd'],
             rotate_point  = sfm_pin_data['circle_center_3d'],
-            normal_vector = sfm_pin_data['vector']
+            normal_vector = sfm_pin_data['vector'],
+            buffer        = cross_buffer
         )
 
         # find the valley minimum
@@ -207,44 +178,51 @@ if __name__ == "__main__":
             best_angle = angles[best_idx]
             best_rot_matrix = matrics[best_idx]
 
-            print(f"Best_idx {best_idx}")
+            # print(f"Best_idx {best_idx}")
 
-            peak_cm = cm.get_cmap('Pastel1')
-            fig = plt.figure()
-            plt.plot(angles, rmses)
+            peak_cm = cm['Pastel1']
+            fig, ax = plt.subplots(1,1, figsize=(6,4))
+            ax.plot(angles, rmses, label="RMSE(m)")
             for i, p in enumerate(peaks):
                 if i == peak_id:
-                    plt.axvline(x=angles[p], color='r', label="current choice")
+                    ax.axvline(x=angles[p], color='r', label="current choice")
                 else:
-                    plt.axvline(x=angles[p], color=peak_cm(i))
+                    ax.axvline(x=angles[p], color=peak_cm(i))
+            ax.legend()
+            ax.set_xlabel("Rotation degrees ($^{\circ}$)")
+            ax.set_ylabel("RMSE")
+            ax.set_title("Optimized errors after rotating around pin normal vector")
+            plt.tight_layout()
             plt.show()
             plt.close()
 
-            print(f':: Iterative vector axis rotation\n   Find the minimum differences {round(np.min(rmses), 7)} on angle {best_angle}')
+            print(f'   Find the minimum differences {round(np.min(rmses), 7)} on angle {best_angle}')
             iimatrix = best_rot_matrix @ imatrix
 
             o3d.visualization.draw_geometries([
                 # initial alignment
-                sfm_data['pcd'], copy.deepcopy(rgbd_data['pcd']).transform(imatrix),
+                sfm_data['pcd'], 
+                # copy.deepcopy(rgbd_data['pcd']).transform(imatrix).paint_uniform_color([0.1,0.1,0.1]),
                 # after iter rotation match
-                copy.deepcopy(rgbd_data['pcd']).transform(iimatrix).paint_uniform_color([1,0,0])
-            ], window_name=f"{pid} - initial registration")
+                copy.deepcopy(rgbd_data['pcd']).transform(iimatrix)
+            ], window_name=f"{pid} - iterative rotating optimization")
 
             if len(peaks) == 1:
                 break
             else:
-                result =  confirm_message('Confirmation', 'This peak is good?')
+                result =  util_qt.confirm_message('Confirmation', 'This peak is good?', no_text="Next")
                 if result: # clWick yes
                     break
                 else:
                     # looping peaks
                     peak_id = ( peak_id + 1 ) % len(peaks)
-                    print(peak_id)
                     continue
 
         ########################
         # ICP + color aligment #
         ########################
+                
+        print(f"=> Class-based ICP detailed optimization")
 
         sfm_pcd_bin = util_ia.paint_pcd_binary(sfm_data['pcd'], sfm_data['pin_idx'])
         rgbd_pcd_bin = util_ia.paint_pcd_binary(rgbd_data['pcd'], rgbd_data['pin_idx']) 
@@ -252,11 +230,15 @@ if __name__ == "__main__":
         # o3d.visualization.draw_geometries([sfm_pcd_bin, rgbd_pcd_bin])
 
         # iteractive add iter
+        icp_iter_num = 0
+        icp_threshold = 0.0005
+        geometry_weight = 0.1
 
-        iter_num = 0
         while True:
-
-            tmatrix = util_ia.color_based_icp(rgbd_pcd_bin, sfm_pcd_bin, iimatrix, threshold=0.002, max_iter=iter_num)
+            tmatrix, o3drmse = util_ia.color_based_icp(
+                rgbd_pcd_bin, sfm_pcd_bin, iimatrix, 
+                threshold=icp_threshold, max_iter=icp_iter_num, geometry_weight=geometry_weight,
+                return_rmse=True)
             
             # visualize frame 2
             rgbd_temp, sfm_temp = util_ia.draw_registration_result(rgbd_data['pcd'], sfm_data['pcd'], tmatrix, paint_color=False, offset=[0.1,0,0])
@@ -266,15 +248,55 @@ if __name__ == "__main__":
                 # after alignment
                 rgbd_temp, sfm_temp, 
                 # rgbd_bin_temp, sfm_bin_temp, 
-            ], window_name=f"{pid} - registration")
+            ], window_name=f"{pid} - Class-based ICP refinement with {icp_iter_num} iters, {icp_threshold}m per step | shape weight {geometry_weight}, class weight {1-geometry_weight}")
 
-            result = iter_num_message("Need more ICP iteration?", f"Current is [{iter_num}] iter(s), decrase if pin shifted")
+            result = util_qt.iter_num_message("Need more ICP iteration?", f"Current is {icp_iter_num} iter(s), decrase if pin shifted")
 
             if result == 0 or result is None:
                 break
             else:
-                iter_num = max(iter_num + result * 5, 0)
+                icp_iter_num = max(icp_iter_num + result, 0)
 
         print(f":: The computered transform matrix: \n{tmatrix}")
 
-        break
+        result =  util_qt.confirm_message('Confirmation', 'Save the matrix file?')
+        if result:
+            source_pcd = copy.deepcopy(rgbd_data['pcd']).transform(tmatrix)
+            rmse = util_la.compute_distance_rmse(source_pcd, sfm_data['pcd'])
+
+            print(f"   Open3D calculated RMSE: {o3drmse}, Self calculated RMSE: {rmse}")
+
+            matrix_file_path = matrix_out_folder / f"{pid}.json"
+
+            output = {
+                "T": tmatrix,
+                "RMSE": rmse,
+                "meta": {
+                    "pin_segment": {
+                        "sfm": {
+                            "hsv_weight": sfm_data['hsv_weight'],
+                            "hsv_index_denoise_threshold": sfm_data['stop_thresh'],
+                            "hsv_index_denoised_volume": sfm_data['stop_hull_volume'], 
+                            "center": sfm_pin_data['circle_center_3d'],
+                            "radius(m)": sfm_pin_data['circle_radius'],
+                            "normal_vector": sfm_pin_data['vector']
+                        },
+                        "rgbd": {
+                            "center": rgbd_pin_data['circle_center_3d'],
+                            "radius(m)": rgbd_pin_data['circle_radius'],
+                            "normal_vector": rgbd_pin_data['vector']
+                        },
+                    },
+                    "pin_neighbor": {
+                        "search_radius(m)": search_radius,
+                        "corss_buffer(m)": cross_buffer
+                    },
+                    "class_based_icp": {
+                        "iter_num":icp_iter_num,
+                        "iter_distance(m)": icp_threshold,
+                        "geometry_weight": geometry_weight
+                    }
+                },
+            }
+
+            dict2json(output, matrix_file_path, indent=4, encoding='utf-8')
