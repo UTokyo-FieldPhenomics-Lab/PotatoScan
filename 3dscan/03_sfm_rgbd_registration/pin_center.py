@@ -9,7 +9,7 @@ import linear_algebra as util_la
     
 def correct_vector_direction(points, vector, vector_root, colors=None):
     start_point = vector_root
-    end_point = vector_root + vector/100
+    end_point = vector_root + vector/100  # 1cm long vector
     # 把start_point & end_point 插入到头部
     root_on_top = np.vstack([start_point.T, end_point.T, points])
 
@@ -29,10 +29,10 @@ def correct_vector_direction(points, vector, vector_root, colors=None):
     dist2min = abs(start - potato_min)
     dist2max = abs(start - potato_max)
 
-    print(f"   st = {start} | ed = {end} | min = {potato_min} | max = {potato_max}")
+    print(f"   V_st = {start} | V_ed = {end} | PCD_min = {potato_min} | PCD_max = {potato_max}")
     # =====debug=====
-    # plot in 3d
-    # root_on_top_projected_3d= project_points_on_vector(
+    # # plot in 3d
+    # root_on_top_projected_3d= util_la.project_points_on_vector(
     #     points=root_on_top, 
     #     vector=vector, 
     #     return_1d=False)
@@ -44,10 +44,10 @@ def correct_vector_direction(points, vector, vector_root, colors=None):
 
     # direct_pts = o3d.geometry.PointCloud()
     # direct_pts.points = o3d.utility.Vector3dVector(root_on_top_projected_3d[:2, :] + np.array([0,0,0.005]))
-    # direct_pts.colors = o3d.utility.Vector3dVector([[0,1,0], [1,0,0]])
+    # direct_pts.colors = o3d.utility.Vector3dVector([[1,0,0], [0,1,0]])
     # o3d.visualization.draw_geometries([pts, direct_pts])
 
-    # plot in 2d
+    # # plot in 2d
     # fig,ax = plt.subplots(1,1, figsize=(4,2))
     # ax.scatter(x=root_on_top_projected[2:], y=np.zeros_like(root_on_top_projected[2:]), c=colors)
     # ax.scatter(x=root_on_top_projected[:2], y=[0.1, 0.1], c=[[1,0,0],[0,1,0]])
@@ -229,20 +229,12 @@ def find_minimum_vector_of_bbox(pcd):
     return min_extent_vector_norm, plane_point
 
 
-def find_pin_center(pin_pcd, pcd, circle_color=[1,0,0], visualize=False, show=False):
+def find_pin_center(pin_pcd, pcd, circle_color=[1,0,0], visualize=False, show=False, label="sfm"):
     vector_normalized, plane_point = find_minimum_vector_of_bbox(pin_pcd)
-
-    print(f":: Correct pin vector direction")
-
-    # 矫正轴的方向
-    pin_vector = correct_vector_direction(
-        np.asarray(pcd.points), vector_normalized, plane_point, np.asarray(pcd.colors)
-    )
-    print(f"   pin vector from {vector_normalized} to {pin_vector}")
 
     # 投影到最短边对应的平面上
     points_3d = np.asarray(pin_pcd.points)
-    points_proj_3d, points_proj_2d, uv = util_la.project_to_plane_vectorized(points_3d, plane_point, pin_vector)
+    points_proj_3d, points_proj_2d, uv = util_la.project_to_plane_vectorized(points_3d, plane_point, vector_normalized)
 
     # 计算2D点集的凸包，并拟合圆
     circle_center_2d, circle_radius, sigma = fit_circle_to_convex_hull(points_proj_2d, show)
@@ -250,6 +242,14 @@ def find_pin_center(pin_pcd, pcd, circle_color=[1,0,0], visualize=False, show=Fa
     # 将2D圆心转换回3D空间坐标
     circle_center_3d = util_la.convert_2d_to_3d(np.asarray([circle_center_2d]), plane_point, uv[0], uv[1])
     circle_center_3d = circle_center_3d[0]
+
+    print(f":: Correct {label} pin vector direction")
+
+    # 矫正轴的方向
+    pin_vector = correct_vector_direction(
+        np.asarray(pcd.points), vector_normalized, circle_center_3d, np.asarray(pcd.colors)
+    )
+    print(f"   pin vector from {vector_normalized} to {pin_vector}")
 
     results = {
         "circle_center_3d": circle_center_3d,

@@ -84,11 +84,11 @@ if __name__ == "__main__":
         
         sfm_pin_data = util_pc.find_pin_center(
             sfm_data['pin_pcd'], sfm_data['pcd'], 
-            circle_color=[0,0,0], visualize=True, show=False
+            circle_color=[0,0,0], visualize=True, show=False, label="sfm"
         )
         rgbd_pin_data = util_pc.find_pin_center(
             rgbd_data['pin_pcd'], rgbd_data['pcd'], 
-            circle_color=[0,0,0], visualize=True, show=False
+            circle_color=[0,0,0], visualize=True, show=False, label="rgbd"
         )
 
         # show frame 1
@@ -113,11 +113,11 @@ if __name__ == "__main__":
         ###############################
         search_radius = 0.03
 
-        print(f"=> Find neighbor point cloud with {search_radius*100} cm radius")
+        print(f"=> Find neighbor with {search_radius*100} cm radius")
 
         # find the pin neighbour of sfm
-        sfm_nbr_data = util_ia.find_pin_nbr(sfm_data, sfm_pin_data, search_radius, visualize=True)
-        rgbd_nbr_data = util_ia.find_pin_nbr(rgbd_data, rgbd_pin_data, search_radius, visualize=True)
+        sfm_nbr_data = util_ia.find_pin_nbr(sfm_data, sfm_pin_data, search_radius, visualize=True, label="sfm-pin")
+        rgbd_nbr_data = util_ia.find_pin_nbr(rgbd_data, rgbd_pin_data, search_radius, visualize=True, label="rgbd-pin")
 
         # using the neighbour points to correct the vector
         # o3d.visualization.draw_geometries([
@@ -168,7 +168,15 @@ if __name__ == "__main__":
         )
 
         # find the valley minimum
-        peaks, _ = find_peaks(-rmses, distance=1)  # 10 degree one sample, x -> x0 degrees
+        peaks, _ = find_peaks(-rmses, distance=1)  
+        # distance=1 -> 1 x 10 degree -> 10 degrees interval
+        # distance=9 -> 9 x 10 degree -> 90 degrees interval
+
+        # find the global minimum incase 0 and 350 not identified as peak
+        gmin_idx = np.argmin(rmses)
+
+        if gmin_idx not in peaks:
+            peaks = np.hstack([peaks, gmin_idx])
 
         # sort peak by values (from minimum to largest)
         if len(peaks) != 1:

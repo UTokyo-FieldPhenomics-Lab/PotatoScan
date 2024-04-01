@@ -13,7 +13,7 @@ import pin_center as util_pc
 # pin neighbour global align #
 ##############################
 
-def find_pin_nbr(pcd_data_dict, pin_data_dict, radius, visualize=False):
+def find_pin_nbr(pcd_data_dict, pin_data_dict, radius, visualize=False, label="sfm-pin"):
     pcd_tree = o3d.geometry.KDTreeFlann(pcd_data_dict['pcd'])
 
     [k1, nbr_idx, _] = pcd_tree.search_radius_vector_3d(
@@ -28,6 +28,8 @@ def find_pin_nbr(pcd_data_dict, pin_data_dict, radius, visualize=False):
 
     nbr_pcd = pcd_data_dict['pcd'].select_by_index(nbr_no_pin_idx)
 
+    print(f":: Find {label} point cloud neighbor")
+
     # calculate the vector according to the new region.
     vector_normalized, bbox_center = util_pc.find_minimum_vector_of_bbox(nbr_pcd)
     # 矫正轴的方向
@@ -35,7 +37,7 @@ def find_pin_nbr(pcd_data_dict, pin_data_dict, radius, visualize=False):
         np.asarray(pcd_data_dict['pcd'].points), 
         vector_normalized, 
         pin_data_dict['circle_center_3d'], 
-        np.asarray(pcd_data_dict['pcd'].colors)
+        np.asarray(pcd_data_dict['pcd'].colors),
     )
     
     results = {
