@@ -18,6 +18,9 @@ import skimage
 import matplotlib.colors as mcolors
 from copy import deepcopy
 
+# convex hull calculation
+from scipy.spatial import ConvexHull
+import warnings
 
 class PinRegions:
     """The base object for RgbdPinFetcher
@@ -427,9 +430,17 @@ class SfMPinFetcher():
     @staticmethod
     def get_hull_volume(o3d_pcd):
         pin_hull = o3d_pcd.compute_convex_hull()[0]
-        hull_volume = pin_hull.get_volume() * 1000 ** 3 # mm3
-
-        return hull_volume
+        # still not watertight
+        if not pin_hull.is_watertight():
+            warnings.warn("Open3d kernel produced a non-watertight convex hull, using SciPy kernel instead")
+            # o3d.visualization.draw_geometries([o3d_pcd, pin_hull])
+            hull = ConvexHull(np.asarray(o3d_pcd.points))
+            # 获取凸包的体积
+            volume = hull.volume
+            return volume * 1000 ** 3 # mm3
+        else:
+            hull_volume = pin_hull.get_volume() * 1000 ** 3 # mm3
+            return hull_volume
 
     def iter_hull_volume_by_thresh(self, sfm_pcd, color_distance_norm, thresh):
 
