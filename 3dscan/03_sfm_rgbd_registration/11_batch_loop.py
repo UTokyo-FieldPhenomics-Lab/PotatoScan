@@ -73,6 +73,10 @@ if __name__ == "__main__":
         if pid in mat_container and not args.overwrite:
             continue
 
+        if pid == "2R1-11":
+            # manually skip the double-pin special case
+            continue 
+
         rgbd_data = rgbd_fetcher.get(pid, visualize=True, show=False)
         sfm_data = sfm_fetcher.get(pid, visualize=True, show=False)
 
@@ -164,7 +168,7 @@ if __name__ == "__main__":
         )
 
         # find the valley minimum
-        peaks, _ = find_peaks(-rmses, distance=9)  # 10 degree one sample, 9 -> 90 degrees
+        peaks, _ = find_peaks(-rmses, distance=1)  # 10 degree one sample, x -> x0 degrees
 
         # sort peak by values (from minimum to largest)
         if len(peaks) != 1:
@@ -269,8 +273,11 @@ if __name__ == "__main__":
             matrix_file_path = matrix_out_folder / f"{pid}.json"
 
             output = {
+                "rgbd_pcd_file": rgbd_data['pcd_rela_path'],
+                "sfm_mesh_file": sfm_data['pcd_rela_path'],
                 "T": tmatrix,
-                "RMSE": rmse,
+                "rms_minimum_distance": rmse,
+                "open3d_inlier_rmse": o3drmse,
                 "meta": {
                     "pin_segment": {
                         "sfm": {

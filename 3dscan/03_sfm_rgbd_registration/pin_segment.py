@@ -212,7 +212,7 @@ class RgbdPinFetcher(object):
         self.centered_img = self.find_center_img(img_infos, img_height=720)
 
     def get(self, potato_id, visualize=False, show=False):
-        pcd, pin_pcd, pcd_ero = self.get_pcd_pin(self.pr, self.centered_img, potato_id)
+        pcd, pin_pcd, pcd_ero, pcd_rela_path = self.get_pcd_pin(self.pr, self.centered_img, potato_id)
 
         pcd_xyz = np.asarray(pcd.points)
         pin_pcd_xyz = np.asarray(pin_pcd.points)
@@ -234,7 +234,8 @@ class RgbdPinFetcher(object):
             'pcd': pcd,
             'pin_pcd': pin_pcd,
             'pin_idx': np.asarray(pin_idx),
-            'pcd_ero': pcd_ero
+            'pcd_ero': pcd_ero,
+            'pcd_rela_path': pcd_rela_path
         }
 
         return results
@@ -341,7 +342,7 @@ class RgbdPinFetcher(object):
         pcd_path = pr.img_root / f"../2_pcd" / pcd_file
         pcd = o3d.io.read_point_cloud(str(pcd_path.resolve()))
 
-        return pcd, pcd_pin, pcd_ero
+        return pcd, pcd_pin, pcd_ero, f"1_rgbd/2_pcd/{pcd_file}"
     
 ###########
 # SfM Pin #
@@ -404,9 +405,11 @@ class SfMPinFetcher():
         ref_color_rgb = []
         ref_color_hsv = {}
 
-        for i in range(1,11):
+        for pin_img_file in os.listdir(ref_color_folder):
 
-            ref_img_path = ref_color_folder / f"{i}.png"
+            pin_id = pin_img_file.replace('.png', '')
+
+            ref_img_path = ref_color_folder / pin_img_file
 
             ref_color_imarray = plt.imread( str(ref_img_path) )
 
@@ -415,7 +418,7 @@ class SfMPinFetcher():
             ref_color_masked = ref_color_imarray[mask]
 
             ref_color_rgb.append(np.median(ref_color_masked[:,0:3], axis=0))
-            ref_color_hsv[str(i)] = np.median(skimage.color.rgb2hsv(ref_color_masked[:,0:3]), axis=0)
+            ref_color_hsv[pin_id] = np.median(skimage.color.rgb2hsv(ref_color_masked[:,0:3]), axis=0)
 
         # custom_colormap = ListedColormap(np.asarray(ref_color_rgb))
 
@@ -459,7 +462,7 @@ class SfMPinFetcher():
         need_hue_reverse = color_distance_diff[:,0] > 0.5
         color_distance_diff[need_hue_reverse, 0] = 1 - color_distance_diff[need_hue_reverse, 0]
 
-        HSV_WEIGHT = [0.5,0.1,0.3]
+        HSV_WEIGHT = [0.8,0.1,0.1]
         color_distance_weight = color_distance_diff * np.array(HSV_WEIGHT)  # hsv weight
         color_distance = color_distance_weight.sum(axis=1)
 
@@ -480,9 +483,10 @@ class SfMPinFetcher():
             hull_volume, pin_idx = self.iter_hull_volume_by_thresh(sfm_pcd, color_distance_norm, thresh)
 
             while hull_volume > 60:
-                print(f"   Thresh={thresh} get pin convex hull volumn {hull_volume} > 60, denoise first")
                 pin_pcd = sfm_pcd.select_by_index(pin_idx)
-                keeped, keeped_idx = pin_pcd.remove_radius_outlier(nb_points=nb_points, radius=radius)
+                pin_pcd_num = len(pin_pcd.points)
+                print(f"Thresh={thresh} get pin convex hull volumn {hull_volume} > 60 with [{pin_pcd_num}] points, denoise first")
+                keeped, keeped_idx = pin_pcd.remove_radius_outlier(nb_points=min(40, int(pin_pcd_num/20)), radius=0.005)
 
                 denoised_volume = self.get_hull_volume(keeped)
 
@@ -504,6 +508,7 @@ class SfMPinFetcher():
         results_container = {
             "pin_idx": pin_idx,
             "pcd": sfm_pcd,
+            "pcd_rela_path": f"2_sfm/1_mesh/{potato_id}/{potato_id}.obj" ,
             "stop_thresh": thresh,
             "stop_hull_volume": hull_volume,
             "hsv_weight": HSV_WEIGHT,
