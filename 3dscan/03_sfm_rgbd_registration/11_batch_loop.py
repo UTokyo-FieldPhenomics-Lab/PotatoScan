@@ -32,7 +32,7 @@ from jsonfile import dict2json
 parser = argparse.ArgumentParser(description="Batch script for checking Transform Matrix")
 parser.add_argument('-o', '--overwrite', default=False, action='store_true', help='overwrite existing matrix')
 parser.add_argument('-i', '--id', default=None, help="specify potato id")
-
+parser.add_argument('-d', '--rgbd_id', default=None, help="specify rgbd image, not the centered one")
 
 if __name__ == "__main__":
     app = QApplication([])
@@ -77,7 +77,7 @@ if __name__ == "__main__":
             # manually skip the double-pin special case
             continue 
 
-        rgbd_data = rgbd_fetcher.get(pid, visualize=True, show=False)
+        rgbd_data = rgbd_fetcher.get(pid, img_id=args.rgbd_id, visualize=True, show=False)
         sfm_data = sfm_fetcher.get(pid, visualize=True, show=False)
 
         print(f"=> Find pin vector")

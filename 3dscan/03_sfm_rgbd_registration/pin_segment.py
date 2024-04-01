@@ -212,10 +212,32 @@ class RgbdPinFetcher(object):
         img_ids = self.pr.coco.getImgIds()
         img_infos = self.pr.coco.loadImgs(img_ids)
 
-        self.centered_img = self.find_center_img(img_infos, img_height=720)
+        self.img_names = self.parse_img_infos(img_infos)
+        # {'2R1-1': 
+        #    {100: {'rgb'  : '2R1-1/2R1-1_rgb_100.png',
+        #           'depth': '2R1-1/2R1-1_depth_100.png'
+        #           'coco_id': xxx, },
+        #     121: {'rgb'  : '2R1-1/2R1-1_rgb_121.png',
+        #           'depth': '2R1-1/2R1-1_depth_121.png',
+        #           'coco_id': xxx, },
+        #     ...
 
-    def get(self, potato_id, visualize=False, show=False):
-        pcd, pin_pcd, pcd_ero, pcd_rela_path = self.get_pcd_pin(self.pr, self.centered_img, potato_id)
+        self.centered_img = self.find_center_img(self.img_names, img_height=720)
+        # {'2R1-1': 
+        #    {'rgb': '2R1-1/2R1-1_rgb_358.png',
+        #     'depth': '2R1-1/2R1-1_depth_358.png',
+        #     'coco_id': xxx},
+        #  '2R1-10': 
+        #    {'rgb': '2R1-10/2R1-10_rgb_364.png',
+        #     'depth': '2R1-10/2R1-10_depth_364.png',
+        #     'coco_id': xxx},
+
+    def get(self, potato_id, img_id=None, visualize=False, show=False):
+        if img_id is None:
+            pcd, pin_pcd, pcd_ero, pcd_rela_path = self.get_pcd_pin(self.pr, self.centered_img, potato_id)
+        else:
+            picked_img = {potato_id: self.img_names[potato_id][int(img_id)]}
+            pcd, pin_pcd, pcd_ero, pcd_rela_path = self.get_pcd_pin(self.pr, picked_img, potato_id)
 
         pcd_xyz = np.asarray(pcd.points)
         pin_pcd_xyz = np.asarray(pin_pcd.points)
@@ -242,10 +264,9 @@ class RgbdPinFetcher(object):
         }
 
         return results
-
-
+    
     @staticmethod
-    def find_center_img(img_infos, img_height):
+    def parse_img_infos(img_infos):
         # a dict to store all frame infos
         # it has the following structure
         # {'2R1-1': 
@@ -275,6 +296,10 @@ class RgbdPinFetcher(object):
             img_names[img_id][pos]['depth'] = fn.replace('rgb', 'depth')
             img_names[img_id][pos]['coco_id'] = img_info['id']
 
+        return img_names
+
+    @staticmethod
+    def find_center_img(img_names, img_height):
         # pick the most centered one (closest to the half img height)
         # it has the following structure:
         # {
