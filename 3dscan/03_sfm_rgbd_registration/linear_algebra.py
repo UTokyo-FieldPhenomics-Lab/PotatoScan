@@ -50,14 +50,19 @@ def project_points_on_vector(points, vector, return_1d=False):
          vector: 1x3的向量
     输出：投影后的点(在空间中的位置)
     """
-    v_norm = np.sqrt(sum(vector**2))
-
-    v3d = (np.dot(points, vector.reshape(3,1))/v_norm**2)*vector
+    # 向量标准化
+    v_norm = np.linalg.norm(vector)
+    unit_vector = vector / v_norm
+    
+    # 计算点在向量上的投影
+    projection = np.dot(points, unit_vector.reshape(3,1))
 
     if return_1d:
-        return np.sqrt(np.sum(v3d**2, axis=1))
+        # 返回一维坐标，即点在向量上的投影长度
+        return projection.flatten()
     else:
-        return v3d
+        # 返回3D坐标，即点在向量上的投影向量
+        return projection * unit_vector
     
 
 ########################
