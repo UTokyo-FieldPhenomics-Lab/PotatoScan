@@ -518,15 +518,19 @@ class SfMPinFetcher():
             thresh = 0.35
             hull_volume, pin_idx = self.iter_hull_volume_by_thresh(sfm_pcd, color_distance_norm, thresh)
 
-            while hull_volume > 80:
+            while hull_volume > 100:
                 pin_pcd = sfm_pcd.select_by_index(pin_idx)
                 pin_pcd_num = len(pin_pcd.points)
-                print(f"Thresh={thresh} get pin convex hull volumn {hull_volume} > 60 with [{pin_pcd_num}] points, denoise first")
-                keeped, keeped_idx = pin_pcd.remove_radius_outlier(nb_points=min(40, int(pin_pcd_num/20)), radius=0.005)
+                if pin_pcd_num > 10000:
+                    print(f"Thresh={thresh} get pin covex hull volumn {hull_volume} > 80 with [{pin_pcd_num}] points, obvious not a pin size")
+                    keeped, keeped_idx = pin_pcd, pin_idx
+                else:
+                    print(f"Thresh={thresh} get pin convex hull volumn {hull_volume} > 80 with [{pin_pcd_num}] points, denoise first")
+                    keeped, keeped_idx = pin_pcd.remove_radius_outlier(nb_points=min(40, int(pin_pcd_num/20)), radius=0.005)
 
                 denoised_volume = self.get_hull_volume(keeped)
 
-                if denoised_volume > 60:  # still > 50 after denoising
+                if denoised_volume > 100:  # still > 50 after denoising
                     thresh -= 0.05
 
                     if thresh <0:

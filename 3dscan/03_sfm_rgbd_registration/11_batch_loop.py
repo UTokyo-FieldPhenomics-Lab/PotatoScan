@@ -68,14 +68,11 @@ if __name__ == "__main__":
             pid_container = [args.id]
 
     for pid in pid_container:
-        print(f"\n====== {pid} ======")
         # skip the pid with existing matrix
         if pid in mat_container and not args.overwrite:
             continue
 
-        if pid == "2R1-11":
-            # manually skip the double-pin special case
-            continue 
+        print(f"\n====== {pid} ======")
 
         rgbd_data = rgbd_fetcher.get(pid, img_id=args.rgbd_id, visualize=True, show=False)
         sfm_data = sfm_fetcher.get(pid, visualize=True, show=False)
@@ -166,17 +163,15 @@ if __name__ == "__main__":
             normal_vector = sfm_pin_data['vector'],
             buffer        = cross_buffer
         )
+        # find the global minimum incase 0 and 350 not identified as peak
+        rmses_dup = np.append(rmses, rmses[0:3])
 
         # find the valley minimum
-        peaks, _ = find_peaks(-rmses, distance=1)  
+        peaks, _ = find_peaks(-rmses_dup, distance=1)
         # distance=1 -> 1 x 10 degree -> 10 degrees interval
         # distance=9 -> 9 x 10 degree -> 90 degrees interval
-
-        # find the global minimum incase 0 and 350 not identified as peak
-        gmin_idx = np.argmin(rmses)
-
-        if gmin_idx not in peaks:
-            peaks = np.hstack([peaks, gmin_idx])
+        peaks = peaks % len(rmses)
+        peaks = np.unique(peaks)
 
         # sort peak by values (from minimum to largest)
         if len(peaks) != 1:
@@ -243,9 +238,10 @@ if __name__ == "__main__":
 
         # iteractive add iter
         icp_iter_num = 0
-        icp_threshold = 0.0005
+        icp_threshold = 0.001
         geometry_weight = 0.1
 
+        first_iter = True
         while True:
             tmatrix, o3drmse = util_ia.color_based_icp(
                 rgbd_pcd_bin, sfm_pcd_bin, iimatrix, 
@@ -256,11 +252,14 @@ if __name__ == "__main__":
             rgbd_temp, sfm_temp = util_ia.draw_registration_result(rgbd_data['pcd'], sfm_data['pcd'], tmatrix, paint_color=False, offset=[0.1,0,0])
             # rgbd_bin_temp, sfm_bin_temp = draw_registration_result(rgbd_pcd_bin, sfm_pcd_bin, tmatrix, paint_color=False, offset=[0.1,0.1,0])
 
-            o3d.visualization.draw_geometries([
-                # after alignment
-                rgbd_temp, sfm_temp, 
-                # rgbd_bin_temp, sfm_bin_temp, 
-            ], window_name=f"{pid} - Class-based ICP refinement with {icp_iter_num} iters, {icp_threshold}m per step | shape weight {geometry_weight}, class weight {1-geometry_weight}")
+            if not first_iter:
+                o3d.visualization.draw_geometries([
+                    # after alignment
+                    rgbd_temp, sfm_temp, 
+                    # rgbd_bin_temp, sfm_bin_temp, 
+                ], window_name=f"{pid} - Class-based ICP refinement with {icp_iter_num} iters, {icp_threshold}m per step | shape weight {geometry_weight}, class weight {1-geometry_weight}")
+            else:
+                first_iter = False
 
             result = util_qt.iter_num_message("Need more ICP iteration?", f"Current is {icp_iter_num} iter(s), decrase if pin shifted")
 
