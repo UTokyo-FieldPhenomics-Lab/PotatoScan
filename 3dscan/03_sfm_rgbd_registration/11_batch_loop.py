@@ -37,7 +37,7 @@ parser.add_argument('-d', '--rgbd_id', default=None, help="specify rgbd image, n
 if __name__ == "__main__":
     app = QApplication([])
 
-    dataset_root = pathlib.Path(r'/home/crest/w/hwang_Pro/datasets/3DPotatoTwin')
+    dataset_root = pathlib.Path(r'/home/crest/w/hwang_Pro/datasets/3DPotatoTwin.source')
     pin_ref_folder = pathlib.Path(r'/home/crest/Documents/Github/PotatoScan/3dscan/03_sfm_rgbd_registration/pin_ref')
 
     args = parser.parse_args()
