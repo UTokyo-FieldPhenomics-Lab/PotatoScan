@@ -261,7 +261,7 @@ if __name__ == "__main__":
             else:
                 first_iter = False
 
-            result = util_qt.iter_num_message("Need more ICP iteration?", f"Current is {icp_iter_num} iter(s), decrase if pin shifted")
+            result = util_qt.iter_num_message("Need more ICP iteration?", f"Current is {icp_iter_num} iter(s), decrease if pin shifted")
 
             if result == 0 or result is None:
                 break
