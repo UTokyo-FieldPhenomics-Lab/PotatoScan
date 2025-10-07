@@ -29,12 +29,13 @@ class ImageSegmenter():
             conf=0.01, task="segment", mode="predict", imgsz=1024, 
             model=self.script_root / "checkpoints" / "sam_models" / "sam2.1_b.pt", 
             save=False)
-        self.sam2_predictor = SAM2DynamicInteractivePredictor(overrides=self.sam2_overrides, max_obj_num=10)
+        
+        self.sam2_predictor = SAM2DynamicInteractivePredictor(overrides=self.sam2_overrides, max_obj_num=3)
 
     def apply(self, 
               image_file:str, 
               hsv_threshold=5, hole_fill_ratio=0.05, noise_remove_ratio=0.001, 
-              sam2_track=False):
+              sam2_track=False, draw_figure=False):
         
         image_pil  = Image.open(image_file)
         image_np   = np.asarray(image_pil)
@@ -46,7 +47,7 @@ class ImageSegmenter():
             gdino_result = self.get_gdino_bbox(image_pil)
             merged_bbox = self.merge_boxes_of_one_object(gdino_result, self.detect_object)
 
-            gdino_detect_prev = self.draw_gdino_results(image_pil, gdino_result)
+            
 
             if merged_bbox is None:
                 # not have merged detections, execute source cv mask
@@ -54,48 +55,53 @@ class ImageSegmenter():
                 cleaned_mask = self.get_cv_mask(image_np, hsv_threshold=hsv_threshold, fill_ratio=hole_fill_ratio, remove_ratio=noise_remove_ratio)
 
             else:
-                with torch.no_grad():
-                    # have merged detections, execute the cv mask only in detection area
-                    image_np_in_bbox, np_bbox = self.crop_image_from_bbox(image_np, merged_bbox)
-                    x_min, y_min, x_max, y_max = np_bbox
-                    print(f"   => cv mask on bbox {np_bbox}")
+                # have merged detections, execute the cv mask only in detection area
+                image_np_in_bbox, np_bbox = self.crop_image_from_bbox(image_np, merged_bbox)
+                x_min, y_min, x_max, y_max = np_bbox
+                print(f"   => cv mask on bbox {np_bbox}")
 
-                    cleaned_mask_in_bbox = self.get_cv_mask(image_np_in_bbox, hsv_threshold=hsv_threshold, fill_ratio=hole_fill_ratio, remove_ratio=noise_remove_ratio)
+                cleaned_mask_in_bbox = self.get_cv_mask(image_np_in_bbox, hsv_threshold=hsv_threshold, fill_ratio=hole_fill_ratio, remove_ratio=noise_remove_ratio)
 
-                    cleaned_mask = np.zeros( (image_np.shape[0], image_np.shape[1]), dtype=bool)
-                    cleaned_mask[y_min:y_max, x_min:x_max] = cleaned_mask_in_bbox
+                cleaned_mask = np.zeros( (image_np.shape[0], image_np.shape[1]), dtype=bool)
+                cleaned_mask[y_min:y_max, x_min:x_max] = cleaned_mask_in_bbox
 
-            cv_mask_prev = self.draw_cv_mask_results(image_pil, cleaned_mask)
-
-            with torch.no_grad():
-                results = self.sam2_predictor(
-                    source=image_file,
-                    bboxes=[merged_bbox.cpu().numpy()], 
-                    masks=[cleaned_mask], 
-                    obj_ids=[1], 
-                    update_memory=True)
-                
+            results = self.sam2_predictor(
+                source=image_file,
+                bboxes=[merged_bbox.cpu().numpy()], 
+                masks=[cleaned_mask], 
+                obj_ids=[1], 
+                update_memory=True)
+            
+            if draw_figure:
+                gdino_detect_prev = self.draw_gdino_results(image_pil, gdino_result)
+                cv_mask_prev = self.draw_cv_mask_results(image_pil, cleaned_mask)
                 sam2_mask_prev = results[0].plot()
 
-            views = dict(gdino=gdino_detect_prev, cv=cv_mask_prev, sam2=sam2_mask_prev)
+                views = dict(img_np=image_np, gdino=gdino_detect_prev, cv=cv_mask_prev, sam2=sam2_mask_prev)
+            else:
+                views = {}
             
-            return results[0], views, image_np
+            return results[0], views
             
         else:
-            with torch.no_grad():
-                results = self.sam2_predictor(source=image_file)
+            results = self.sam2_predictor(source=image_file)
 
+            if draw_figure:
                 sam2_mask_prev = results[0].plot()
+                views = dict(img_np=image_np, gdino=None, cv=None, sam2=sam2_mask_prev)
+            else:
+                views = {}
 
-            views = dict(gdino=None, cv=None, sam2=sam2_mask_prev)
-
-            return results[0], views, image_np
-
+            return results[0], views
+        
+    def refresh_sam2_predictor(self):
+        self.sam2_predictor.memory_bank.clear()
+        self.sam2_predictor.obj_idx_set.clear()
+        print("   -> clear SAM2 memory")
 
     def get_gdino_bbox(self, image_pil, box_threshold=0.3, text_threshold=0.25):
-        with torch.no_grad():
-            self.gdino_results = self.gdino_model.predict([image_pil], [self.texts_prompt], box_threshold=box_threshold, text_threshold=text_threshold)
-            return self.gdino_results[0]
+        gdino_results = self.gdino_model.predict([image_pil], [self.texts_prompt], box_threshold=box_threshold, text_threshold=text_threshold)
+        return gdino_results[0]
 
 
     def merge_boxes_of_one_object(self, gdino_result, object_name):
@@ -263,84 +269,79 @@ class ImageSegmenter():
 
         return annotated_image
     
-    def draw_final_preview(self, title, save_path, raw_img, view_dict, random_save=0.05):
-        if random.random() > 1-random_save:  # save 5% to preview
-            return
-        
-        h, w, _ = raw_img.shape
-        # Set a base size for the width and calculate height proportionally
-        base_size = 10  # inches
-        fig_w = base_size
-        fig_h = base_size * (h / w)
+def draw_final_preview(title, save_path, view_dict):
+    h, w, _ = view_dict['img_np'].shape
+    # Set a base size for the width and calculate height proportionally
+    base_size = 10  # inches
+    fig_w = base_size
+    fig_h = base_size * (h / w)
 
-        if view_dict['gdino'] is not None:
-            # draw 2x2 figure
-            figsize = (fig_w, fig_h)
-            self._draw_all_preview(title, save_path, figsize, raw_img, 
-                                   gdino_prev=view_dict['gdino'], 
-                                   cv_prev=view_dict['cv'], 
-                                   sam_prev=view_dict['sam2'])
+    if view_dict['gdino'] is not None:
+        # draw 2x2 figure
+        figsize = (fig_w, fig_h)
+        _draw_all_preview(title, save_path, figsize, raw_img=view_dict['img_np'], 
+                                            gdino_prev=view_dict['gdino'], 
+                                            cv_prev=view_dict['cv'], 
+                                            sam_prev=view_dict['sam2'])
 
-        else:
-            # draw 1x2 figure
-            figsize = (fig_w, fig_h / 2)
-            self._draw_sam2_inferenced_preview(title, save_path, figsize, raw_img, 
-                                               sam_prev=view_dict['sam2'])
+    else:
+        # draw 1x2 figure
+        figsize = (fig_w, fig_h / 2)
+        _draw_sam2_inferenced_preview(title, save_path, figsize, raw_img=view_dict['img_np'], 
+                                                        sam_prev=view_dict['sam2'])
 
-    @staticmethod
-    def _draw_all_preview(title, save_path, fig_size, raw_img, gdino_prev, cv_prev, sam_prev):
+def _draw_all_preview(title, save_path, fig_size, raw_img, gdino_prev, cv_prev, sam_prev):
 
-        fig, ax = plt.subplots(2, 2, figsize=fig_size)
+    fig, ax = plt.subplots(2, 2, figsize=fig_size)
 
-        plt.suptitle(title)
+    plt.suptitle(title)
 
-        ax[0, 0].imshow(raw_img)
-        ax[0, 0].axis('off')
-        ax[0, 0].set_title("(a) Raw image")
+    ax[0, 0].imshow(raw_img)
+    ax[0, 0].axis('off')
+    ax[0, 0].set_title("(a) Raw image")
 
-        ax[0, 1].imshow(gdino_prev)
-        ax[0, 1].axis('off')
-        ax[0, 1].set_title("(b) GDINO detected bbox")
+    ax[0, 1].imshow(gdino_prev)
+    ax[0, 1].axis('off')
+    ax[0, 1].set_title("(b) GDINO detected bbox")
 
-        ax[1, 0].imshow(cv_prev)
-        ax[1, 0].axis('off')
-        ax[1, 0].set_title("(c) HSV threshed mask")
+    ax[1, 0].imshow(cv_prev)
+    ax[1, 0].axis('off')
+    ax[1, 0].set_title("(c) HSV threshed mask")
 
-        ax[1, 1].imshow(sam_prev)
-        ax[1, 1].axis('off')
-        ax[1, 1].set_title("(d) SAM2 prompted mask")
+    ax[1, 1].imshow(sam_prev)
+    ax[1, 1].axis('off')
+    ax[1, 1].set_title("(d) SAM2 prompted mask")
 
-        plt.tight_layout()
-        plt.savefig(save_path, bbox_inches='tight')
+    plt.tight_layout()
+    plt.savefig(save_path, bbox_inches='tight')
 
-        plt.clf()
-        plt.cla()
-        plt.close(fig)
+    plt.clf()
+    plt.cla()
+    plt.close(fig)
 
-        del fig, ax
+    del fig, ax
 
-    @staticmethod
-    def _draw_sam2_inferenced_preview(title, save_path, fig_size, raw_img, sam_prev):
-        fig, ax = plt.subplots(1, 2, figsize=fig_size)
+def _draw_sam2_inferenced_preview(title, save_path, fig_size, raw_img, sam_prev):
+    fig, ax = plt.subplots(1, 2, figsize=fig_size)
 
-        plt.suptitle(title)
+    plt.suptitle(title)
 
-        ax[0].imshow(raw_img)
-        ax[0].axis('off')
-        ax[0].set_title("(a) Raw image")
+    ax[0].imshow(raw_img)
+    ax[0].axis('off')
+    ax[0].set_title("(a) Raw image")
 
-        ax[1].imshow(sam_prev)
-        ax[1].axis('off')
-        ax[1].set_title("(b) SAM2 tracked mask")
+    ax[1].imshow(sam_prev)
+    ax[1].axis('off')
+    ax[1].set_title("(b) SAM2 tracked mask")
 
-        plt.tight_layout()
-        plt.savefig(save_path, bbox_inches='tight')
+    plt.tight_layout()
+    plt.savefig(save_path, bbox_inches='tight')
 
-        plt.clf()
-        plt.cla()
-        plt.close(fig)
+    plt.clf()
+    plt.cla()
+    plt.close(fig)
 
-        del fig, ax
+    del fig, ax
 
 if __name__ == "__main__":
     working_directory = r"/home/crest/w/hwang_Pro/data/202509_sarabetsu_potato/01_sfm_model"
@@ -349,7 +350,8 @@ if __name__ == "__main__":
     mask_folder = os.path.join(working_directory, 'masks')
     preview_directory = os.path.join(mask_folder, 'preview')
 
-    SAM_TRACK_IMG_NUM = 3
+    SAM_TRACK_IMG_NUM = 2
+    RANDOM_SAVE_POSSIBILITY = 0.1  # save 10% of results for preview
 
     print(":: init ImageSegmentor")
     imgseg = ImageSegmenter(detect_object="potato tuber")
@@ -359,7 +361,12 @@ if __name__ == "__main__":
         os.makedirs(preview_directory)
         print(f":: create prview_directory [{preview_directory}]")
 
+    # ========================
+    #      start looping
+    # ========================
     for foldername, subfolders, filenames in os.walk(img_folder):
+
+        preview_saving_processes = []
 
         chunk_name = foldername.split('images/')[-1].split('/')[0]
 
@@ -370,6 +377,16 @@ if __name__ == "__main__":
 
         print(f"=> precessing [{chunk_name}]")
 
+        imgseg.refresh_sam2_predictor()
+
+        if random.random() > 1 - RANDOM_SAVE_POSSIBILITY:  # save 5% to preview
+            save_preview = True
+        else:
+            save_preview = False
+
+        # ==============================
+        #   for each image in subfolder
+        # ==============================
         for filename in filenames:
             file_path = os.path.join(foldername, filename)
 
@@ -382,10 +399,10 @@ if __name__ == "__main__":
             mask_path = os.path.join(mfolder, maskname)
             if os.path.exists(mask_path):
                 # skip processing exists file
-                # continue
-                pass
+                print(f"   -> image [{file_path}] has been processed, skip")
+                continue
             else:
-                print(f"   -> Processing [{file_path}]")
+                print(f"   -> Processing image [{file_path}]")
 
             # mask not exists
             if tracking == 0:
@@ -396,22 +413,24 @@ if __name__ == "__main__":
             else:
                 sam2track = True
             
-            result, view_dict, img_np = imgseg.apply(file_path, 5, 0.05, 0.001, sam2_track=sam2track)
+            result, view_dict = imgseg.apply(
+                file_path, 5, 0.05, 0.001, sam2_track=sam2track, draw_figure=save_preview
+            )
 
             cv_mask = (result.masks.data.cpu().numpy().squeeze() * 255).astype(np.uint8)
 
             ski.io.imsave(mask_path, cv_mask)
 
-            title = file_path.replace(working_directory, '')
+            if save_preview:
+                title = file_path.replace(working_directory, '')
 
-            # save previow
-            imgseg.draw_final_preview(
-                title, 
-                save_path = os.path.join(preview_directory, f'{chunk_name}_{maskname}'),
-                raw_img=img_np, view_dict=view_dict,
-                random_save=0
-            )
+                print("   -> save preview")
+                # save preview
+                draw_final_preview(
+                        title, 
+                        os.path.join(preview_directory, f'{chunk_name}_{maskname}'), 
+                        view_dict
+                )
+                print("   <- save preview ends")
             
             tracking += 1
-
-        break
