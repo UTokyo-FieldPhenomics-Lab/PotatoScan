@@ -25,6 +25,11 @@ dependencies = [
     { name = "ultralytics" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "segmentation-refinement" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "ipykernel", specifier = ">=6.30.1" },
@@ -34,6 +39,9 @@ requires-dist = [
     { name = "transformers", extras = ["torch"], specifier = ">=4.57.0" },
     { name = "ultralytics", specifier = ">=8.3.204" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "segmentation-refinement", specifier = ">=0.6" }]
 
 [[package]]
 name = "accelerate"
@@ -1700,6 +1708,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fd/c2/e276a237acb09824822b0ada11b028ed4067fdc367a946730979feacb870/scipy-1.16.2-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:b0348d8ddb55be2a844c518cd8cc8deeeb8aeba707cf834db5758fc89b476a2c", size = 38790088, upload-time = "2025-09-11T17:44:53.011Z" },
     { url = "https://files.pythonhosted.org/packages/c6/b4/5c18a766e8353015439f3780f5fc473f36f9762edc1a2e45da3ff5a31b21/scipy-1.16.2-cp314-cp314t-win_amd64.whl", hash = "sha256:26284797e38b8a75e14ea6631d29bda11e76ceaa6ddb6fdebbfe4c4d90faf2f9", size = 39457455, upload-time = "2025-09-11T17:44:58.899Z" },
     { url = "https://files.pythonhosted.org/packages/97/30/2f9a5243008f76dfc5dee9a53dfb939d9b31e16ce4bd4f2e628bfc5d89d2/scipy-1.16.2-cp314-cp314t-win_arm64.whl", hash = "sha256:d2a4472c231328d4de38d5f1f68fdd6d28a615138f842580a8a321b5845cf779", size = 26448374, upload-time = "2025-09-11T17:45:03.45Z" },
+]
+
+[[package]]
+name = "segmentation-refinement"
+version = "0.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fb/7f/d4e99e2c5698da1bfdf97c0e130851b1869db0b9939891e5638d5a8d4312/segmentation-refinement-0.6.tar.gz", hash = "sha256:6656323dbd69ad12ef35f68efa6b6fec7474bf17d04e6600dddf88e6572ef9e7", size = 8661, upload-time = "2022-08-19T16:35:13.031Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/86/cb/35692e8823499bd28a5552e2c078eb72c1457d12a990e1bf06e4e07d4331/segmentation_refinement-0.6-py3-none-any.whl", hash = "sha256:1c9b7531ee0c3ac69b74e7ee90976171e251a3691fd8391dbcd1d1ab67ed3027", size = 9872, upload-time = "2022-08-19T16:35:11.598Z" },
 ]
 
 [[package]]
