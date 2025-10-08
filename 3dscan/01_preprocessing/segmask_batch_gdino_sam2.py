@@ -4,6 +4,9 @@ import numpy as np
 import random
 from pathlib import Path
 
+from loguru import logger
+from datetime import datetime
+
 from PIL import Image
 import skimage as ski
 import supervision as sv
@@ -13,25 +16,34 @@ import matplotlib.pyplot as plt
 from gdino import GDINO
 from ultralytics.models.sam import SAM2DynamicInteractivePredictor
 
+
 class ImageSegmenter():
 
-    def __init__(self, detect_object:str, ):
+    def __init__(self, detect_object:str, logger):
+        self.logger = logger
+
         self.script_root = Path(__file__).parent.resolve()
+        self.logger.info(f"Execute the script at {self.script_root}")
 
         self.gdino_model = GDINO()
         self.gdino_model.build_model(device="cuda")
+        self.logger.info(f"Grounding DINO model loaded")
 
         self.detect_object = detect_object
         # self.texts_prompt = ". ".join(self.detect_objects)
         self.texts_prompt = detect_object
+        self.logger.info(f"Prompt for Grounding DINO object detection: {self.texts_prompt}")
 
         self.sam2_overrides = dict(
             conf=0.01, task="segment", mode="predict", imgsz=1024, 
             model=self.script_root / "checkpoints" / "sam_models" / "sam2.1_b.pt", 
             save=False)
+        self.logger.info(f"SAM2 overrides: {self.sam2_overrides}")
         
         self.sam2_predictor = SAM2DynamicInteractivePredictor(overrides=self.sam2_overrides, max_obj_num=3)
+        self.logger.info(f"SAM2 predictor loaded")
 
+    @logger.catch
     def apply(self, 
               image_file:str, 
               hsv_threshold=5, hole_fill_ratio=0.05, noise_remove_ratio=0.001, 
@@ -44,36 +56,39 @@ class ImageSegmenter():
             # begining SAM2 tracking
 
             # obtain the bbox
-            gdino_result = self.get_gdino_bbox(image_pil)
-            merged_bbox = self.merge_boxes_of_one_object(gdino_result, self.detect_object)
-
-            
+            gdino_results = self.gdino_model.predict([image_pil], [self.texts_prompt], box_threshold=0.3, text_threshold=0.25)
+            merged_bbox = self.merge_boxes_of_one_object(gdino_results[0], self.detect_object)
 
             if merged_bbox is None:
                 # not have merged detections, execute source cv mask
-                print("   => cv mask on full image")
+                self.logger.info("   => cv mask on full image")
                 cleaned_mask = self.get_cv_mask(image_np, hsv_threshold=hsv_threshold, fill_ratio=hole_fill_ratio, remove_ratio=noise_remove_ratio)
 
+                results = self.sam2_predictor(
+                    source=image_file,
+                    masks=[cleaned_mask], 
+                    obj_ids=[1], 
+                    update_memory=True)
             else:
                 # have merged detections, execute the cv mask only in detection area
                 image_np_in_bbox, np_bbox = self.crop_image_from_bbox(image_np, merged_bbox)
                 x_min, y_min, x_max, y_max = np_bbox
-                print(f"   => cv mask on bbox {np_bbox}")
+                self.logger.info(f"   => cv mask on bbox {np_bbox}")
 
                 cleaned_mask_in_bbox = self.get_cv_mask(image_np_in_bbox, hsv_threshold=hsv_threshold, fill_ratio=hole_fill_ratio, remove_ratio=noise_remove_ratio)
 
                 cleaned_mask = np.zeros( (image_np.shape[0], image_np.shape[1]), dtype=bool)
                 cleaned_mask[y_min:y_max, x_min:x_max] = cleaned_mask_in_bbox
 
-            results = self.sam2_predictor(
-                source=image_file,
-                bboxes=[merged_bbox.cpu().numpy()], 
-                masks=[cleaned_mask], 
-                obj_ids=[1], 
-                update_memory=True)
+                results = self.sam2_predictor(
+                    source=image_file,
+                    bboxes=[merged_bbox.cpu().numpy()], 
+                    masks=[cleaned_mask], 
+                    obj_ids=[1], 
+                    update_memory=True)
             
             if draw_figure:
-                gdino_detect_prev = self.draw_gdino_results(image_pil, gdino_result)
+                gdino_detect_prev = self.draw_gdino_results(image_pil, gdino_results[0])
                 cv_mask_prev = self.draw_cv_mask_results(image_pil, cleaned_mask)
                 sam2_mask_prev = results[0].plot()
 
@@ -97,11 +112,7 @@ class ImageSegmenter():
     def refresh_sam2_predictor(self):
         self.sam2_predictor.memory_bank.clear()
         self.sam2_predictor.obj_idx_set.clear()
-        print("   -> clear SAM2 memory")
-
-    def get_gdino_bbox(self, image_pil, box_threshold=0.3, text_threshold=0.25):
-        gdino_results = self.gdino_model.predict([image_pil], [self.texts_prompt], box_threshold=box_threshold, text_threshold=text_threshold)
-        return gdino_results[0]
+        self.logger.info("   -> clear SAM2 memory")
 
 
     def merge_boxes_of_one_object(self, gdino_result, object_name):
@@ -122,11 +133,14 @@ class ImageSegmenter():
             # Concatenate to form the merged bounding box
             merged_box = torch.cat([min_xy, max_xy])
             
-            print(f"   Merged BBox for object [{object_name}]", merged_box)
+            self.logger.info(f"   Merged BBox for object [{object_name}]", merged_box)
 
             return merged_box
         else:
-            print(f"   No bounding boxes to merge for object [{object_name}]")
+            self.logger.warning(f"   No bounding boxes to merge for object [{object_name}]")
+            self.logger.debug(f"   The gdino_result data is: {gdino_result}")
+
+
             return None
         
     @staticmethod
@@ -349,17 +363,20 @@ if __name__ == "__main__":
     img_folder = os.path.join(working_directory, 'images')
     mask_folder = os.path.join(working_directory, 'masks')
     preview_directory = os.path.join(mask_folder, 'preview')
+    log_folder = os.path.join(mask_folder, 'logs')
+
+    logger.add(os.path.join(log_folder, f"gdino_sam2_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log") )
 
     SAM_TRACK_IMG_NUM = 2
     RANDOM_SAVE_POSSIBILITY = 0.1  # save 10% of results for preview
 
-    print(":: init ImageSegmentor")
-    imgseg = ImageSegmenter(detect_object="potato tuber")
-    print("   ImageSegmentor created")
+    logger.info(":: init ImageSegmentor")
+    imgseg = ImageSegmenter(detect_object="potato tuber", logger=logger)
+    logger.info("   ImageSegmentor created")
 
     if not os.path.exists(preview_directory):
         os.makedirs(preview_directory)
-        print(f":: create prview_directory [{preview_directory}]")
+        logger.info(f":: create prview_directory [{preview_directory}]")
 
     # ========================
     #      start looping
@@ -375,7 +392,7 @@ if __name__ == "__main__":
         if not filenames:
             continue
 
-        print(f"=> precessing [{chunk_name}]")
+        logger.info(f"=> precessing [{chunk_name}]")
 
         imgseg.refresh_sam2_predictor()
 
@@ -399,10 +416,10 @@ if __name__ == "__main__":
             mask_path = os.path.join(mfolder, maskname)
             if os.path.exists(mask_path):
                 # skip processing exists file
-                print(f"   -> image [{file_path}] has been processed, skip")
+                logger.info(f"   -> image [{file_path}] has been processed, skip")
                 continue
             else:
-                print(f"   -> Processing image [{file_path}]")
+                logger.info(f"   -> Processing image [{file_path}]")
 
             # mask not exists
             if tracking == 0:
@@ -424,13 +441,13 @@ if __name__ == "__main__":
             if save_preview:
                 title = file_path.replace(working_directory, '')
 
-                print("   -> save preview")
+                logger.info("   -> save preview")
                 # save preview
                 draw_final_preview(
                         title, 
                         os.path.join(preview_directory, f'{chunk_name}_{maskname}'), 
                         view_dict
                 )
-                print("   <- save preview ends")
+                logger.info("   <- save preview ends")
             
             tracking += 1
