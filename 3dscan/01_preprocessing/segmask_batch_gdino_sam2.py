@@ -363,7 +363,7 @@ if __name__ == "__main__":
     img_folder = os.path.join(working_directory, 'images')
     mask_folder = os.path.join(working_directory, 'masks')
     preview_directory = os.path.join(mask_folder, 'preview')
-    log_folder = os.path.join(mask_folder, 'logs')
+    log_folder = os.path.join(working_directory, 'logs')
 
     logger.add(os.path.join(log_folder, f"gdino_sam2_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log") )
 
