@@ -85,10 +85,14 @@ def add_masks(chunk, mask_root_folder, mask_format):
     return chunk
 
 def add_scalebar(chunk, scalebar_csv):
+    print("scalebar_csv: ", type(scalebar_csv), scalebar_csv)
     if isinstance(scalebar_csv, dict):
         scale_dict = scalebar_csv
-    elif os.path.isfile(scalebar_csv):
-        scale_dict = read_scalebar_csv(scalebar_csv)
+    elif isinstance(scalebar_csv, str):
+        if os.path.isfile(scalebar_csv):
+            scale_dict = read_scalebar_csv(scalebar_csv)
+        else:
+            raise FileNotFoundError(f"Given scalebar_csv path [{scalebar_csv}] is not an existing file path")
     else:
         raise TypeError(f'Only file path <str> and outputs <dict> from read_scale_csv() are acceptable, not {type(scalebar_csv)}')
 

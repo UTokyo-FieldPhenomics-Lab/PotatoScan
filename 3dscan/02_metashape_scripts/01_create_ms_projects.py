@@ -1,68 +1,71 @@
 import os
 import Metashape
 
+from loguru import logger
+from datetime import datetime
+
 import configs as cfg
 import ms_utils as mst
 
 if __name__ == '__main__':
 
+    logger.add(os.path.join(cfg.log_folder, f"create_ms_projects_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"), 
+               format="{time} {level} {message}", filter="my_module")
+
     doc_dict = {}
 
-    for subfolder in os.listdir(cfg.image_folder):
+    metashape_project_name = ""
+
+    for i, subfolder in enumerate( sorted( os.listdir(cfg.image_folder) ) ):
+
+        if subfolder == ".DS_Store":
+            continue
+
         chunk_id = subfolder
-        print(chunk_id)
 
-        # 2R5-10 -> aRb-c
-        b, c = chunk_id.split('-')
-        a, b = b.split('R')
-        if a == '':
-            a = 1
+        # split to different groups by config.py: project_nax_chunk_num
+        if cfg.project_max_chunk_num > 0:
+            group_i = i % cfg.project_max_chunk_num
+            # update name if go to a new group
+            if group_i == 0:
+                metashape_project_name = f"{cfg.metashape_project_prefix}_{chunk_id}"
 
-        a, b, c = int(a), int(b), int(c)
+        else:
+            metashape_project_name = cfg.metashape_project_prefix
 
-        # 50 as one group maximum
-        group_id = b // 5
-
-        fname = f'{a}R_Group{group_id}'
-
-        if fname not in doc_dict.keys():
-            # already exists
-            doc_dict[fname] = {}
+        # create dict key if not exists
+        if metashape_project_name not in doc_dict.keys():
+            doc_dict[metashape_project_name] = {}
 
         for subsubfolder in os.listdir(os.path.join(cfg.image_folder, subfolder)):
             rotate_id = subsubfolder
             # check if is an empty folder
             if len(os.listdir(os.path.join(cfg.image_folder, subfolder, subsubfolder))) > 0:
-                if chunk_id in doc_dict[fname].keys():
-                    doc_dict[fname][chunk_id].append(rotate_id)
+                if chunk_id in doc_dict[metashape_project_name].keys():
+                    doc_dict[metashape_project_name][chunk_id].append(rotate_id)
                 else:
-                    doc_dict[fname][chunk_id] = [rotate_id]
+                    doc_dict[metashape_project_name][chunk_id] = [rotate_id]
 
-    scalebar_dict = {}
-    for scalebar_csv in ['scalebar.csv', 'scalebar2.csv']:
-        scalebar_dict[scalebar_csv] = mst.read_scalebar_csv(scalebar_csv)
+    for ms_project_name, chunk_rotate in doc_dict.items():
 
-    which_scalebar_file = {}
-    with open('scalebarlist.csv', "r") as f:
-        lines = f.readlines()
-        for l in lines:
-            c_id, sb_file, _, _, _ = l.split(",")
-            which_scalebar_file[c_id] = sb_file
-
-    for ms_file, chunk_rotate in doc_dict.items():
-
-        doc = mst.open_metashape_project(os.path.join(cfg.working_directory, "projects.psx", ms_file+'.psx'))
+        doc = mst.open_metashape_project(os.path.join(cfg.working_directory, "projects.psx", ms_project_name+'.psx'))
 
         for chunk_id, chunk_value in chunk_rotate.items():
 
-            if not '5R' in chunk_id:
-                continue
-
             chunk = mst.create_one_chunk(doc, chunk_id, chunk_value, cfg.camera_mode, cfg.image_folder, cfg.img_format)
-            chunk = mst.add_masks(chunk, os.path.join(cfg.working_directory, "masks"))
-            chunk = mst.add_scalebar(chunk, scalebar_dict[which_scalebar_file[chunk_id]])
 
-            doc.save()
+            if chunk is not None:
+                chunk = mst.add_masks(chunk, os.path.join(cfg.working_directory, "masks"), cfg.mask_format)
+                if cfg.scalebar_csv_file is not None:
+                    chunk = mst.add_scalebar(chunk, cfg.scalebar_csv_file)
+
+                # add GCP for z axis
+                if cfg.target_xyz_position_file is not None:
+                    chunk.importReference(cfg.target_xyz_position_file, format=Metashape.ReferenceFormat(3), columns="nxyz", delimiter=",")
+
+                chunk.updateTransform()
+
+                doc.save()
 
             # break
 
