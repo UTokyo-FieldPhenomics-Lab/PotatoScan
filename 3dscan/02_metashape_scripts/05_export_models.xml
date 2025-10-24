@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<batchjobs version="2.1.0" save_project="false">
+<batchjobs version="2.2.1">
   <job name="ExportModel" target="all">
     <format>1</format>
-    <path>../outputs/models/{chunklabel}.obj</path>
+    <path>../outputs/models/{chunklabel}/{chunklabel}.obj</path>
     <strip_extensions>true</strip_extensions>
   </job>
 </batchjobs>

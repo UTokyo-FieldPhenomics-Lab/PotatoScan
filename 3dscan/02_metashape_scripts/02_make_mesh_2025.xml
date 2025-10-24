@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<batchjobs version="2.2.1">
+  <job name="AlignPhotos" target="active">
+    <downscale>0</downscale>
+    <generic_preselection>false</generic_preselection>
+    <mask_tiepoints>false</mask_tiepoints>
+    <reference_preselection_mode>2</reference_preselection_mode>
+    <reset_alignment>true</reset_alignment>
+    <reset_matches>true</reset_matches>
+  </job>
+  <job name="BuildPointCloud" target="active">
+    <point_confidence>true</point_confidence>
+    <replace_asset>true</replace_asset>
+    <reuse_depth>true</reuse_depth>
+  </job>
+  <job name="RunScript" target="all">
+    <args>single</args>
+    <path>/home/crest/Documents/Github/PotatoScan/3dscan/02_metashape_scripts/02_filter_by_confidence.py</path>
+  </job>
+  <job name="BuildModel" target="active">
+    <classes>0</classes>
+    <face_count>0</face_count>
+    <face_count_custom>90000</face_count_custom>
+    <replace_asset>true</replace_asset>
+    <reuse_depth>true</reuse_depth>
+    <source_data>1</source_data>
+  </job>
+  <job name="BuildTexture" target="active">
+    <texture_size>2048</texture_size>
+  </job>
+</batchjobs>
