@@ -1,7 +1,4 @@
-
 __pycache__
-3dscan/01_preprocessing/psp_models/*
-3dscan/01_preprocessing/sam_models/*
-3dscan/00_data_collection/device.hardware/ms_12bit_out.pdf
-/3dscan/01_preprocessing/checkpoints
-3dscan/02_metashape_scripts/metashape.whl/Metashape-2.2.2-cp37.cp38.cp39.cp310.cp311-abi3-linux_x86_64.whl
+00_data_collection/device.hardware/ms_12bit_out.pdf
+01_preprocessing/checkpoints
+02_metashape_scripts/metashape.whl/*.whl
