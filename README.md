@@ -1,3 +1,5 @@
+# 3dscan code (sfm part) of 3DPotatoTwin dataset
+
 ## Installation
 
 **Step 1**
@@ -17,13 +19,12 @@ $ uv sync
 
 It will create a `.venv` at current project folder and install the `tests` dependency group and `train` dependency group inside `pyproject.toml`.
 
-
 **Step 2**
 
-Download `metashape.whl` which meets your metashape version to `3dscan/02_metashape_scripts/metasahpe_xxxx.whl`
+Download `metashape.whl` which meets your metashape version to `02_metashape_scripts/metasahpe_xxxx.whl`
 
 ```
-$ uv pip install 3dscan/02_metashape_scripts/metashape_xxxx.whl
+$ uv pip install 02_metashape_scripts/metashape_xxxx.whl
 ```
 
 ## Processing log (2025)
@@ -67,8 +68,7 @@ Need to manually define the `scalebar.csv` and `gcp.csv` files in advance.
 
 In year 2023, we wrongly involved two scalebar systems, thus using `00_reference_list.ipynb` to distinguish them, please ignore in 2025.
 
-The 
-
+The
 
 ** 2025, mistakely involved duplicate marker id, thus disable using `/home/crest/w/hwang_Pro/data/202509_sarabetsu_potato/01_sfm_model/scripts/fix_2025_marker_problem.py` to disable duplicated markers by the following rule:
 
@@ -105,9 +105,8 @@ for chunk in chunks:
         for marker in markers:
             if marker.label in ["47"]:
                 marker.enabled = False
-            
+          
 ```
-
 
 ## Processing log (2023)
 
@@ -116,16 +115,15 @@ for chunk in chunks:
 * use `00_data_collection` script to collect and organize image data
 * use `01_preprocessing/segmask_batch.py` to segment all masks of potatoes
 * use `02_metashape_scripts/01_create_ms_projects.py` to create chunks with image and masks added (need a python environemnt with `metashape.whl` installed)
-* open Metashape of each project    
-    * batch processing `02_metashape_scripts/02_make_mesh.xml`, only checked `align_photos` function
-    * execute script `02_metashape_scripts/03_update_regions.py`, to rotate and change the processing regions of model (pass arguments `single` if only need to redo on current chunk rather than all chunks)
-    * batch processing `02_metashape_scripts/02_make_mesh.xml`, checked `build_mesh` and `build_texture` function
-    * manuall check the results, record the error models
+* open Metashape of each project
+  * batch processing `02_metashape_scripts/02_make_mesh.xml`, only checked `align_photos` function
+  * execute script `02_metashape_scripts/03_update_regions.py`, to rotate and change the processing regions of model (pass arguments `single` if only need to redo on current chunk rather than all chunks)
+  * batch processing `02_metashape_scripts/02_make_mesh.xml`, checked `build_mesh` and `build_texture` function
+  * manuall check the results, record the error models
 * fix the errors
-    * change the color and area threshold in `01_preprocessing/segmask_batch.py` to `01_preprocessing/segmask_batch_fix.py`, re-run
-    * create error ones' project by `02_metashape_scripts/04_create_ms_projects_fix.py`
-    * repeat the 3D reconstruction steps above
+  * change the color and area threshold in `01_preprocessing/segmask_batch.py` to `01_preprocessing/segmask_batch_fix.py`, re-run
+  * create error ones' project by `02_metashape_scripts/04_create_ms_projects_fix.py`
+  * repeat the 3D reconstruction steps above
 * export models and volumes
-    * use `02_metashape_scripts/05_export_models.xml` to export 3D models as obj files
-    * use `02_metashape_scripts/06_export_volume.ipynb` to calculate the volumes of each model and save to csv file
-
+  * use `02_metashape_scripts/05_export_models.xml` to export 3D models as obj files
+  * use `02_metashape_scripts/06_export_volume.ipynb` to calculate the volumes of each model and save to csv file
