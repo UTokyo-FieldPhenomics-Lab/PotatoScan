@@ -17,7 +17,14 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
     QWidget,
+    QLabel,
 )
+from PySide6.QtGui import QPixmap, QImage
+from PySide6.QtCore import Qt
+
+import io
+import matplotlib
+import matplotlib.pyplot as plt
 
 
 class Viewer3D(QWidget):
@@ -66,12 +73,24 @@ class Viewer3D(QWidget):
 
         # Create plotter widgets for each tab
         self._plotter_raw = QtInteractor(self)
-        self._plotter_sfm_pin = QtInteractor(self)
-        self._plotter_pin_detect = QtInteractor(self)
         self._plotter_aligned = QtInteractor(self)
+        self._plotter_pin_detect = QtInteractor(self)
+
+        # SfM Pin Tab with Layout
+        self._tab_sfm_pin_widget = QWidget()
+        sfm_pin_layout = QVBoxLayout(self._tab_sfm_pin_widget)
+        sfm_pin_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self._plotter_sfm_pin = QtInteractor(self._tab_sfm_pin_widget)
+        sfm_pin_layout.addWidget(self._plotter_sfm_pin)
+        
+        self._sfm_pin_colorbar_label = QLabel()
+        self._sfm_pin_colorbar_label.setAlignment(Qt.AlignCenter)
+        self._sfm_pin_colorbar_label.setFixedHeight(80)
+        sfm_pin_layout.addWidget(self._sfm_pin_colorbar_label)
 
         self._tabs.addTab(self._plotter_raw, "Raw")
-        self._tabs.addTab(self._plotter_sfm_pin, "SfM Pin")
+        self._tabs.addTab(self._tab_sfm_pin_widget, "SfM Pin")
         self._tabs.addTab(self._plotter_pin_detect, "Pin Detection")
         self._tabs.addTab(self._plotter_aligned, "Aligned")
 
@@ -167,6 +186,26 @@ class Viewer3D(QWidget):
         self._transform = transform
         self._update_views()
 
+    def _generate_colorbar_pixmap(self) -> QPixmap:
+        """Generate a matplotlib colorbar for HSV distance."""
+        fig, ax = plt.subplots(figsize=(10, 1))
+        fig.subplots_adjust(bottom=0.7)
+        
+        norm = matplotlib.colors.Normalize(vmin=0, vmax=1)
+        cb = fig.colorbar(
+            matplotlib.cm.ScalarMappable(norm=norm, cmap="viridis"),
+            cax=ax, orientation='horizontal'
+        )
+        cb.set_label('HSV color distance')
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', transparent=True)
+        buf.seek(0)
+        plt.close(fig)
+        
+        qimg = QImage.fromData(buf.getvalue())
+        return QPixmap.fromImage(qimg)
+
     def set_sfm_pin_data(self, data: dict) -> None:
         """
         Set data for SfM Pin visualization.
@@ -177,6 +216,11 @@ class Viewer3D(QWidget):
             Dictionary with keys: 'pcd', 'pcd_offset_colormap', 'pin_pcd_strengthen'.
         """
         self._sfm_pin_data = data
+        
+        # Update colorbar
+        pixmap = self._generate_colorbar_pixmap()
+        self._sfm_pin_colorbar_label.setPixmap(pixmap)
+        
         self._update_views()
 
     def set_pin_detection_data(self, data: dict) -> None:
@@ -324,66 +368,56 @@ class Viewer3D(QWidget):
         if self._sfm_pin_data is None:
             return
 
+        sfm_pcd = self._sfm_pin_data.get('pcd')
+        if sfm_pcd is None:
+            return
+            
+        # Calculate dynamic spacing
+        bbox = sfm_pcd.get_axis_aligned_bounding_box()
+        extent = bbox.get_max_bound() - bbox.get_min_bound()
+        max_extent = np.max(extent)
+        spacing = max_extent * 1.25
+        
+        center = sfm_pcd.get_center()
+
         # 1. Left: Original SfM
         self._add_mesh_to_plotter(
             self._plotter_sfm_pin, 
-            self._sfm_pin_data.get('pcd'),
-            offset=np.array([-0.2, 0, 0])
+            sfm_pcd,
+            offset=np.array([-spacing, 0, 0])
         )
 
         # 2. Middle: HSV Colormap
-        self._add_mesh_to_plotter(
-            self._plotter_sfm_pin, 
-            self._sfm_pin_data.get('pcd_offset_colormap'),
-            offset=None # Already offset in the fetching logic? 
-            # In pin_segment.py, pcd_offset_colormap is offset by [0.1, 0, 0]
-            # But here we want to control placement. 
-            # Let's assume passed data is raw, OR check if it has offset.
-            # The user request said "Left: Original, Middle: HSV, Right: Red Pin".
-            # If `pcd_offset_colormap` already has offset, we might need to adjust.
-            # Let's force our own offsets for consistency.
-            # Actually, `pin_segment.py` adds [0.1, 0, 0] to `pcd_offset_colormap`.
-            # We can re-center and place at [0, 0, 0].
-        )
-        
-        # It's safer to rely on visual offsets we define here for "Parallel placement".
-        # But `pcd_offset_colormap` is a modified PointCloud with colors.
-        # Let's try to subtract the known offset from `pin_segment.py` if needed, 
-        # or just assume it is a distinct object.
-        # Actually, let's just place them.
-        
-        # Middle: HSV Colormap
-        # We need to extract the geometry. If it was offsetted in `pin_segment`, 
-        # we might want to respect that or reset it.
-        # However, for this specific request "Parallel placement", 
-        # let's assume we place: Original at -0.1, HSV at 0.0, Red Pin at +0.1
-        
         hsv_pcd = self._sfm_pin_data.get('pcd_offset_colormap')
         if hsv_pcd:
-            # Shift back by 0.1 to center it (since it likely has +0.1 offset from generator)
-            # Or just place it where it is.
-            # Let's verify: `xyz = np.asarray(sfm_pcd_cm.points) + np.array([0.1, 0, 0])`
-            # So it is at +0.1 relative to original.
-            # We want Middle, so maybe we leave it there?
-            # And Left (Original) at -0.1 relative to original?
-             self._add_mesh_to_plotter(
+            hsv_center = hsv_pcd.get_center()
+            correction = center - hsv_center
+            self._add_mesh_to_plotter(
                 self._plotter_sfm_pin, 
                 hsv_pcd,
-                offset=None # It is already at +0.1
+                offset=correction 
             )
         
-        # 3. Right: Red Pin
-        # This one typically is just points.
+        # 3. Right: Combined (HSV background + Red Pin)
+        if hsv_pcd:
+            hsv_center = hsv_pcd.get_center()
+            correction = center - hsv_center
+            self._add_mesh_to_plotter(
+                self._plotter_sfm_pin, 
+                hsv_pcd,
+                offset=correction + np.array([spacing, 0, 0])
+            )
+
         pin_pcd_red = self._sfm_pin_data.get('pin_pcd_strengthen')
         if pin_pcd_red:
-             # We want this to be to the right of HSV.
-             # HSV is at +0.1.
-             # Let's place Red Pin at +0.2.
-             # The `pin_pcd_strengthen` in `pin_segment` does NOT have offset added.
+             # Assume pin pcd (from indices) is in original sfm frame (near center)
+             # So we shift it by spacing
              self._add_mesh_to_plotter(
                 self._plotter_sfm_pin, 
                 pin_pcd_red,
-                offset=np.array([0.2, 0, 0])
+                offset=np.array([spacing, 0, 0]),
+                color="red",
+                point_size=5
              )
              
         self._plotter_sfm_pin.reset_camera()
