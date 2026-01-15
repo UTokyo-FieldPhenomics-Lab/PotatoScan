@@ -519,6 +519,22 @@ class SfMPinFetcher():
         logger.debug(f"Found: year={year}, pin_color={pin_color}")
         return year, pin_color
 
+    def get_all_pin_colors(self):
+        """
+        Get a dictionary map of potato ID to pin color.
+        
+        Returns
+        -------
+        dict[str, str]
+            Map of {potato_id: pin_color}.
+        """
+        if 'pin_color' not in self.df.columns or 'label' not in self.df.columns:
+            return {}
+        
+        # Filter for rows that have both label and pin_color
+        valid_df = self.df.dropna(subset=['label', 'pin_color'])
+        return dict(zip(valid_df['label'], valid_df['pin_color']))
+
     def _get_ref_color_hsv(self, year, color):
         """
         Get reference color HSV for a specific year and color.

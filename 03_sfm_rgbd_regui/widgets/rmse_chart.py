@@ -10,9 +10,10 @@ from typing import Optional
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PySide6.QtCore import Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -59,23 +60,39 @@ class RmseChartWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        # Top label (Title)
+        self._lbl_title = QLabel("Rotation Optimization - Local Minima")
+        self._lbl_title.setAlignment(Qt.AlignCenter)
+        font = self._lbl_title.font()
+        font.setPointSize(8)
+        self._lbl_title.setFont(font)
+        layout.addWidget(self._lbl_title)
+
         # Matplotlib figure
         self._figure = Figure(figsize=(6, 2.5), dpi=100)
         self._figure.set_tight_layout(True)
+        # Reduce margins to save space
+        self._figure.subplots_adjust(top=0.95, bottom=0.15, left=0.1, right=0.95)
         self._canvas = FigureCanvas(self._figure)
         self._ax = self._figure.add_subplot(111)
 
         layout.addWidget(self._canvas)
 
-        # Navigation buttons
+        # Navigation buttons and X-Axis label
         nav_layout = QHBoxLayout()
-        nav_layout.setContentsMargins(8, 4, 8, 4)
+        nav_layout.setContentsMargins(8, 0, 8, 4)
 
         self._btn_prev = QPushButton("◀ Prev Peak")
         self._btn_prev.clicked.connect(self._on_prev_peak)
         nav_layout.addWidget(self._btn_prev)
 
-        nav_layout.addStretch()
+        # Middle label (X-Axis description)
+        self._lbl_xaxis = QLabel("Rotation Angle (°)")
+        self._lbl_xaxis.setAlignment(Qt.AlignCenter)
+        font = self._lbl_xaxis.font()
+        font.setPointSize(8)
+        self._lbl_xaxis.setFont(font)
+        nav_layout.addWidget(self._lbl_xaxis)  # Center label
 
         self._btn_next = QPushButton("Next Peak ▶")
         self._btn_next.clicked.connect(self._on_next_peak)
@@ -123,6 +140,8 @@ class RmseChartWidget(QWidget):
         self._ax.plot(self._angles, self._rmses, "b-", linewidth=1.5, label="RMSE")
 
         # Plot peak markers
+        # Plot peak markers
+        has_potential_label = False
         for i, peak_idx in enumerate(self._peaks):
             angle = self._angles[peak_idx]
             if i == self._current_peak:
@@ -133,22 +152,26 @@ class RmseChartWidget(QWidget):
                     label="Current",
                 )
             else:
+                label = "Potential" if not has_potential_label else "_nolegend_"
                 self._ax.axvline(
                     x=angle,
                     color="gray",
                     linewidth=1,
                     alpha=0.6,
+                    label=label,
                 )
+                has_potential_label = True
 
-        # Labels and title
-        self._ax.set_xlabel("Rotation Angle (°)")
+        # Labels and title (Removed text as per request, handled by Qt labels)
+        self._ax.set_xlabel("")
         self._ax.set_ylabel("RMSE")
-        self._ax.set_title("Rotation Optimization - Local Minima")
+        self._ax.set_title("")
 
         # Legend (only show if we have peaks)
         if len(self._peaks) > 0:
             self._ax.legend(loc="upper right", fontsize=8)
 
+        self._figure.tight_layout() # re-apply tight layout
         self._canvas.draw()
 
     def _update_buttons(self) -> None:

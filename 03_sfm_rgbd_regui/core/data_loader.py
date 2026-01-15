@@ -143,6 +143,18 @@ class DataLoader:
         for json_file in self.config.output_folder.glob("*.json"):
             completed.append(json_file.stem)
         return completed
+    
+    def get_pin_colors(self) -> dict[str, str]:
+        """
+        Get mapping of potato IDs to their pin colors.
+
+        Returns
+        -------
+        dict[str, str]
+            Map of {potato_id: pin_color}.
+        """
+        self._init_fetchers()
+        return self._sfm_fetcher.get_all_pin_colors()
 
     def load_rgbd(
         self,

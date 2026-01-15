@@ -141,6 +141,21 @@ class MainWindow(QMainWindow):
         param_layout.addWidget(self._param_panel)
         layout.addWidget(param_group)
 
+        # Navigation buttons (Moved from right panel)
+        nav_layout = QHBoxLayout()
+        # nav_layout.addStretch() # Don't need stretch here if we want them to expand or fill
+
+        self._btn_prev = QPushButton("< Previous")
+        self._btn_prev.clicked.connect(self._on_prev_item)
+        nav_layout.addWidget(self._btn_prev)
+
+        self._btn_save = QPushButton("Save && Next >")
+        self._btn_save.clicked.connect(self._on_save_and_next)
+        self._btn_save.setDefault(True)
+        nav_layout.addWidget(self._btn_save)
+
+        layout.addLayout(nav_layout)
+
         return panel
 
     def _create_right_panel(self) -> QWidget:
@@ -159,22 +174,8 @@ class MainWindow(QMainWindow):
         self._rmse_chart = RmseChartWidget()
         self._rmse_chart.peak_changed.connect(self._on_peak_changed)
         chart_layout.addWidget(self._rmse_chart)
-        layout.addWidget(chart_group, stretch=1)
-
-        # Navigation buttons
-        nav_layout = QHBoxLayout()
-        nav_layout.addStretch()
-
-        self._btn_prev = QPushButton("< Previous")
-        self._btn_prev.clicked.connect(self._on_prev_item)
-        nav_layout.addWidget(self._btn_prev)
-
-        self._btn_save = QPushButton("Save && Next >")
-        self._btn_save.clicked.connect(self._on_save_and_next)
-        self._btn_save.setDefault(True)
-        nav_layout.addWidget(self._btn_save)
-
-        layout.addLayout(nav_layout)
+        # Increased stretch factor to give more space
+        layout.addWidget(chart_group, stretch=2)
 
         return panel
 
@@ -299,7 +300,8 @@ class MainWindow(QMainWindow):
 
         ids = self._loader.get_ids()
         completed = self._loader.get_completed_ids()
-        self._file_tree.set_items(ids, completed)
+        pin_colors = self._loader.get_pin_colors()
+        self._file_tree.set_items(ids, completed, pin_colors)
 
     @Slot(str)
     def _on_item_selected(self, pid: str) -> None:

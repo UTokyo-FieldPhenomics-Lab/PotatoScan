@@ -59,8 +59,8 @@ class FileTreeWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._tree = QTreeWidget()
-        self._tree.setHeaderLabels(["Status", "ID"])
-        self._tree.setColumnCount(2)
+        self._tree.setHeaderLabels(["Status", "ID", "Pin Color"])
+        self._tree.setColumnCount(3)
         self._tree.setRootIsDecorated(False)
         self._tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self._tree.setAlternatingRowColors(True)
@@ -68,7 +68,8 @@ class FileTreeWidget(QWidget):
         # Column widths
         header = self._tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
 
         # Connect signals
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
@@ -80,6 +81,7 @@ class FileTreeWidget(QWidget):
         self,
         ids: list[str],
         completed: Optional[list[str]] = None,
+        pin_colors: Optional[dict[str, str]] = None,
     ) -> None:
         """
         Set the list of potato IDs.
@@ -90,6 +92,8 @@ class FileTreeWidget(QWidget):
             List of all potato IDs.
         completed : list[str], optional
             List of completed (aligned) IDs.
+        pin_colors : dict[str, str], optional
+            Map of ID to pin color.
         """
         self._tree.clear()
         self._items.clear()
@@ -109,6 +113,36 @@ class FileTreeWidget(QWidget):
             # ID column
             item.setText(1, pid)
             item.setData(1, Qt.UserRole, pid)
+
+            # PinColor column
+            if pin_colors and pid in pin_colors:
+                color_name = pin_colors[pid].lower()
+                item.setText(2, color_name)
+                
+                # Map names to QColors
+                # Using somewhat darker shades for readability on light background
+                color_map = {
+                    "red": "#D32F2F",      # Darker red
+                    "green": "#388E3C",    # Darker green
+                    "blue": "#1976D2",     # Darker blue
+                    "yellow": "#FBC02D",   # Darker yellow
+                    "white": "#9E9E9E",    # Gray for white
+                    "black": "#000000",
+                    "purple": "#7B1FA2",
+                    "pink": "#C2185B",
+                    "magenta": "#D81B60",
+                    "cyan": "#0097A7",
+                    "orange": "#F57C00",
+                    "brown": "#5D4037",
+                }
+                
+                if color_name in color_map:
+                    item.setForeground(2, QBrush(QColor(color_map[color_name])))
+                else:
+                    # Fallback for unknown colors - try to use name directly if valid
+                    qcol = QColor(color_name)
+                    if qcol.isValid():
+                        item.setForeground(2, QBrush(qcol))
 
             self._tree.addTopLevelItem(item)
             self._items[pid] = item
