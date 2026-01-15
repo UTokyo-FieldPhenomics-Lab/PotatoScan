@@ -38,6 +38,7 @@ from core import (
 )
 from widgets import FileTreeWidget, ParameterPanel, RmseChartWidget, Viewer3D
 from ui.preferences_dialog import PreferencesDialog
+from utils import pin_center as util_pc
 
 
 class MainWindow(QMainWindow):
@@ -321,6 +322,49 @@ class MainWindow(QMainWindow):
             # Set point clouds in viewer
             self._viewer.set_sfm_cloud(self._current_sfm["pcd"])
             self._viewer.set_rgbd_cloud(self._current_rgbd["pcd"])
+            
+            # --- 1. SfM Pin Tab Data ---
+            # Pass the data loaded by SfMPinFetcher directly to the viewer
+            # It already contains 'pcd', 'pcd_offset_colormap', 'pin_pcd_strengthen'
+            self._viewer.set_sfm_pin_data(self._current_sfm)
+
+            # --- 2. Pin Detection Tab Data ---
+            # Calculate pin center geometry (disk, arrow) for SfM
+            sfm_pin_result = util_pc.find_pin_center(
+                self._current_sfm['pin_pcd'], 
+                self._current_sfm['pcd'], 
+                circle_color=[1, 0, 0], # Red
+                visualize=True, 
+                show=False, 
+                label="sfm"
+            )
+            
+            # Calculate pin center geometry for RGBD
+            rgbd_pin_result = util_pc.find_pin_center(
+                self._current_rgbd['pin_pcd'], 
+                self._current_rgbd['pcd'], 
+                circle_color=[1, 1, 0], # Yellow
+                visualize=True, 
+                show=False, 
+                label="rgbd"
+            )
+            
+            # Combine into one dictionary for the viewer
+            pin_detect_data = {
+                # SfM Group
+                'sfm_pcd': self._current_sfm['pcd'],
+                'sfm_pin_pcd': self._current_sfm['pin_pcd'], # Or 'pin_pcd_strengthen' if available/preferred
+                'sfm_disk': sfm_pin_result.get('circle_mesh'),
+                'sfm_arrow': sfm_pin_result.get('vector_arrow'),
+                
+                # RGBD Group
+                'rgbd_pcd': self._current_rgbd['pcd'],
+                'rgbd_pin_pcd': self._current_rgbd['pin_pcd'],
+                'rgbd_disk': rgbd_pin_result.get('circle_mesh'),
+                'rgbd_arrow': rgbd_pin_result.get('vector_arrow'),
+            }
+            
+            self._viewer.set_pin_detection_data(pin_detect_data)
 
             # Run alignment
             self._run_alignment()

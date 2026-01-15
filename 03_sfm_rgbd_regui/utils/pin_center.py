@@ -154,18 +154,16 @@ def create_circle_mesh(center_2d, radius, plane_point, uv, num_segments=100, col
     # 转换为3d坐标
     points = util_la.convert_2d_to_3d(np.asarray(points), plane_point, uv[0], uv[1])
     
-    # 创建三角网格
+    # Create triangle mesh (solid disk)
     mesh = o3d.geometry.TriangleMesh()
     mesh.vertices = o3d.utility.Vector3dVector(points)
     mesh.triangles = o3d.utility.Vector3iVector(indices)
     mesh.compute_vertex_normals()
-
-    mesh_lineset = o3d.geometry.LineSet.create_from_triangle_mesh(mesh)
-    num_lines = len(np.asarray(mesh_lineset.lines))
-    line_colors = [color] * num_lines
-    mesh_lineset.colors = o3d.utility.Vector3dVector(line_colors)
     
-    return mesh_lineset
+    # Paint uniform color
+    mesh.paint_uniform_color(color)
+    
+    return mesh
 
 def create_vector_arrow(start_point, vector_normal, zoom=0.01, color=None):
     arrow = o3d.geometry.TriangleMesh.create_arrow(
