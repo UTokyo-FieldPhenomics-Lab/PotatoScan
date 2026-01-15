@@ -22,6 +22,8 @@ from copy import deepcopy
 from scipy.spatial import ConvexHull
 import warnings
 
+from loguru import logger
+
 class PinRegions:
     """The base object for RgbdPinFetcher
     """
@@ -202,43 +204,49 @@ class PinRegions:
 class RgbdPinFetcher(object):
 
     def __init__(self, rgbd_root):
-        # Try multiple possible coco files
+        # Try to load all available coco files and merge them
         coco_file_candidates = [
             rgbd_root / '1_rgbd/pin_regions_2023.json',
             rgbd_root / '1_rgbd/pin_regions_2025.json',
-            rgbd_root / '1_rgbd/pin_regions.json',  # fallback
         ]
         
-        coco_file = None
-        for candidate in coco_file_candidates:
-            if candidate.exists():
-                coco_file = candidate
-                break
+        self.rgbd_root = rgbd_root
+        self.img_root = rgbd_root / '1_rgbd/1_image'
+        self.csv_file = rgbd_root / '3_pair/ground_truth_2025.csv'
+        self.intrinsics_file = rgbd_root / '1_rgbd/0_camera_intrinsics/realsense_d405_camera_intrinsic.json'
         
-        if coco_file is None:
+        # Load all COCO files that exist
+        self._coco_objects = {}  # {coco_file_path: COCO object}
+        all_img_infos = []
+        
+        for coco_file in coco_file_candidates:
+            if coco_file.exists():
+                logger.info(f"Loading COCO file: {coco_file}")
+                coco = COCO(coco_file)
+                self._coco_objects[str(coco_file)] = coco
+                
+                img_ids = coco.getImgIds()
+                img_infos = coco.loadImgs(img_ids)
+                all_img_infos.extend(img_infos)
+        
+        if not self._coco_objects:
             raise FileNotFoundError(
                 f"No pin_regions JSON found. Tried: {coco_file_candidates}"
             )
         
+        # Load CSV and intrinsics (use first available PinRegions for these)
+        first_coco_file = list(self._coco_objects.keys())[0]
         self.pr = PinRegions(
-            img_root = rgbd_root / '1_rgbd/1_image',
-            coco_file = coco_file,
-            csv_file = rgbd_root / 'ground_truth.csv',
-            intrinsics_file = rgbd_root / '1_rgbd/0_camera_intrinsics/realsense_d405_camera_intrinsic.json',
+            img_root=self.img_root,
+            coco_file=first_coco_file,
+            csv_file=self.csv_file,
+            intrinsics_file=self.intrinsics_file,
         )
-
-        img_ids = self.pr.coco.getImgIds()
-        img_infos = self.pr.coco.loadImgs(img_ids)
-
-        self.img_names = self.parse_img_infos(img_infos)
-        # {'2R1-1': 
-        #    {100: {'rgb'  : '2R1-1/2R1-1_rgb_100.png',
-        #           'depth': '2R1-1/2R1-1_depth_100.png'
-        #           'coco_id': xxx, },
-        #     121: {'rgb'  : '2R1-1/2R1-1_rgb_121.png',
-        #           'depth': '2R1-1/2R1-1_depth_121.png',
-        #           'coco_id': xxx, },
-        #     ...
+        
+        # Parse all image infos from all COCO files
+        self.img_names = self.parse_img_infos(all_img_infos)
+        logger.debug(f"Loaded {len(self.img_names)} potato IDs from COCO files")
+        logger.debug(f"Sample IDs: {list(self.img_names.keys())[:5]}...")
 
         self.centered_img = self.find_center_img(self.img_names, img_height=720)
         # {'2R1-1': 
@@ -246,11 +254,10 @@ class RgbdPinFetcher(object):
         #     'depth': '2R1-1/2R1-1_depth_358.png',
         #     'coco_id': xxx},
         #  '2R1-10': 
-        #    {'rgb': '2R1-10/2R1-10_rgb_364.png',
-        #     'depth': '2R1-10/2R1-10_depth_364.png',
-        #     'coco_id': xxx},
 
     def get(self, potato_id, img_id=None, visualize=False, show=False):
+        logger.info(f"RgbdPinFetcher.get() called with potato_id={potato_id}")
+        
         if img_id is None:
             pcd, pin_pcd, pcd_ero, pcd_rela_path = self.get_pcd_pin(self.pr, self.centered_img, potato_id)
         else:
@@ -259,6 +266,8 @@ class RgbdPinFetcher(object):
 
         pcd_xyz = np.asarray(pcd.points)
         pin_pcd_xyz = np.asarray(pin_pcd.points)
+
+        logger.debug(f"RGBD: pcd has {len(pcd_xyz)} points, pin_pcd has {len(pin_pcd_xyz)} points")
 
         # get the index of pin
         pin_idx = []
@@ -269,6 +278,11 @@ class RgbdPinFetcher(object):
 
             if idx_temp:
                 pin_idx.append(idx_temp[0])
+
+        logger.debug(f"RGBD: found {len(pin_idx)} pin indices")
+        
+        if len(pin_idx) == 0:
+            logger.warning(f"No pin indices found for {potato_id} - pin segmentation may have failed")
 
         if show:
             o3d.visualization.draw_geometries([pcd, pin_pcd])
@@ -285,30 +299,40 @@ class RgbdPinFetcher(object):
     
     @staticmethod
     def parse_img_infos(img_infos):
-        # a dict to store all frame infos
-        # it has the following structure
-        # {'2R1-1': 
-        #    {100: {'rgb'  : '2R1-1/2R1-1_rgb_100.png',
-        #           'depth': '2R1-1/2R1-1_depth_100.png'
-        #           'coco_id': xxx, },
-        #     121: {'rgb'  : '2R1-1/2R1-1_rgb_121.png',
-        #           'depth': '2R1-1/2R1-1_depth_121.png',
-        #           'coco_id': xxx, },
-        #     ...
+        """
+        Parse image infos from COCO into a structured dict.
+        
+        Handles two filename formats:
+        - 2023: folder/file format like "2R1-1/2R1-1_rgb_100.png"
+        - 2025: flat format like "2025-000_rgb_355.png"
+        
+        Returns dict: {potato_id: {pos: {'rgb': ..., 'depth': ..., 'coco_id': ...}}}
+        """
         img_names = {}
 
         for img_info in img_infos:
             fn = img_info['file_name']
-
-            img_id = fn.split('/')[0]
+            
+            # Detect format: check if there's a folder separator
+            if '/' in fn:
+                # 2023 format: "2R1-1/2R1-1_rgb_100.png"
+                img_id = fn.split('/')[0]
+                filename = fn.split('/')[1]
+            else:
+                # 2025 format: "2025-000_rgb_355.png"
+                # Extract potato ID: everything before "_rgb_"
+                parts = fn.split('_rgb_')
+                img_id = parts[0]
+                filename = fn
 
             if img_id not in img_names.keys():
                 img_names[img_id] = {}
 
-            pos = int(fn.split('_')[-1][:-4])
+            # Extract position number from filename
+            pos = int(filename.split('_')[-1][:-4])
 
             if pos not in img_names[img_id].keys():
-                img_names[img_id][pos]  = {}
+                img_names[img_id][pos] = {}
 
             img_names[img_id][pos]['rgb'] = fn
             img_names[img_id][pos]['depth'] = fn.replace('rgb', 'depth')
@@ -345,11 +369,32 @@ class RgbdPinFetcher(object):
 
     @staticmethod
     def get_pcd_pin(pr, centered_img, potato_id):
-        rgb_img_path = pr.img_root / centered_img[potato_id]['rgb']
-        depth_img_path = pr.img_root / centered_img[potato_id]['depth']
-
+        rgb_rel_path = centered_img[potato_id]['rgb']
+        depth_rel_path = centered_img[potato_id]['depth']
+        
+        # Try to find the image file - handle both folder and flat structures
+        # 2023 format: "2R1-1/2R1-1_rgb_100.png" (already has folder)
+        # 2025 format in COCO: "2025-000_rgb_355.png" (flat)
+        # 2025 actual: "2025-000/2025-000_rgb_355.png" (in folder)
+        
+        rgb_img_path = pr.img_root / rgb_rel_path
+        depth_img_path = pr.img_root / depth_rel_path
+        
+        # If flat path doesn't exist, try adding potato_id folder prefix
+        if not rgb_img_path.exists():
+            alt_rgb_path = pr.img_root / potato_id / rgb_rel_path
+            alt_depth_path = pr.img_root / potato_id / depth_rel_path
+            if alt_rgb_path.exists():
+                rgb_img_path = alt_rgb_path
+                depth_img_path = alt_depth_path
+                logger.debug(f"Using folder-based path for {potato_id}")
+            else:
+                logger.error(f"Image not found at {rgb_img_path} or {alt_rgb_path}")
+        
         # rgb img
         rgba = cv2.imread(str(rgb_img_path), cv2.IMREAD_UNCHANGED)
+        if rgba is None:
+            raise FileNotFoundError(f"Cannot read RGB image: {rgb_img_path}")
         img = rgba[:,:,:-1]
         mask = rgba[:,:,-1]
 
@@ -384,140 +429,259 @@ class RgbdPinFetcher(object):
                 name=ann_ids, gt_depth=gt_depth)
             
         # read the source image
-        pcd_file = centered_img[potato_id]['rgb'].replace('rgb', 'pcd').replace('.png', '.ply')
-        pcd_path = pr.img_root / f"../2_pcd" / pcd_file
+        rgb_rel_path = centered_img[potato_id]['rgb']
+        pcd_filename = rgb_rel_path.replace('rgb', 'pcd').replace('.png', '.ply')
+        
+        # Handle both folder and flat path formats
+        if '/' in rgb_rel_path:
+            # 2023 format: "2R1-1/2R1-1_pcd_100.ply"
+            pcd_path = pr.img_root / f"../2_pcd" / pcd_filename
+        else:
+            # 2025 format: need to check if file is in folder
+            pcd_path = pr.img_root / f"../2_pcd" / potato_id / pcd_filename
+            if not pcd_path.exists():
+                # Try flat path
+                pcd_path = pr.img_root / f"../2_pcd" / pcd_filename
+        
+        logger.debug(f"Reading RGBD point cloud: {pcd_path.resolve()}")
+        if not pcd_path.exists():
+            raise FileNotFoundError(f"RGBD PLY file not found: {pcd_path}")
         pcd = o3d.io.read_point_cloud(str(pcd_path.resolve()))
 
-        return pcd, pcd_pin, pcd_ero, f"1_rgbd/2_pcd/{pcd_file}"
+        return pcd, pcd_pin, pcd_ero, f"1_rgbd/2_pcd/{pcd_filename}"
     
 ###########
 # SfM Pin #
 ###########
     
 class SfMPinFetcher():
+    """
+    Fetcher for SfM point cloud with pin segmentation.
+    
+    Pin reference colors are loaded from:
+        dataset_root / 2_sfm / 3_pin_refs / {year} / {color}.png
+    
+    Where year and color are determined from the ground_truth CSV file.
+    """
 
-    def __init__(self, dataset_root, ref_folder) -> None:
-        self.sfm_pcd_folder = dataset_root / '2_SfM/2_pcd'
+    def __init__(self, dataset_root, csv_file) -> None:
+        """
+        Initialize SfMPinFetcher.
+        
+        Parameters
+        ----------
+        dataset_root : Path
+            Root folder of the dataset.
+        csv_file : Path
+            Path to ground_truth CSV file with measurement_day and pin_color.
+        """
+        self.dataset_root = pathlib.Path(dataset_root)
+        self.sfm_pcd_folder = self.dataset_root / '2_sfm/2_pcd'
+        self.pin_ref_folder = self.dataset_root / '2_sfm/3_pin_refs'
+        
+        # Load ground truth CSV for pin color lookup
+        logger.debug(f"Loading CSV: {csv_file}")
+        self.df = pd.read_csv(csv_file)
+        logger.debug(f"CSV columns: {list(self.df.columns)}")
+        logger.debug(f"CSV labels: {self.df['label'].tolist()[:10]}...")
+        
+        # Cache for loaded reference colors: {(year, color): hsv_array}
+        self._ref_color_cache = {}
 
-        self.ref_color_hsv = self.get_ref_color(ref_folder)
-
-    def get(self, potato_id, 
-            thresh=None, # for color diff
-            nb_points=40, radius=0.005, # for denoise
-            visualize=False, show=False
-        ):
-        """All the default settings are according to POTATO!
-        Refer to `05_mesh_pin_colorref.ipynb` for draft references
-
+    def _get_potato_info(self, potato_id):
+        """
+        Get measurement year and pin color for a potato ID.
+        
         Parameters
         ----------
         potato_id : str
-            The name of potato, remove the file suffix
+            Potato ID (e.g., "2025-000").
+            
+        Returns
+        -------
+        tuple[str, str]
+            (year, pin_color) e.g., ("2023", "black")
+        """
+        logger.debug(f"Looking up potato: {potato_id}")
+        row = self.df.loc[self.df['label'] == potato_id]
+        if row.empty:
+            logger.error(f"Potato ID '{potato_id}' not found in CSV")
+            logger.debug(f"Available labels: {self.df['label'].tolist()}")
+            raise ValueError(f"{potato_id}")
+        
+        # measurement_day format: "14-09-2023" -> year = "2023"
+        measurement_day = row['measurement_day'].values[0]
+        year = measurement_day.split('-')[-1]
+        
+        # pin_color: e.g., "black"
+        pin_color = row['pin_color'].values[0]
+        
+        logger.debug(f"Found: year={year}, pin_color={pin_color}")
+        return year, pin_color
+
+    def _get_ref_color_hsv(self, year, color):
+        """
+        Get reference color HSV for a specific year and color.
+        
+        Parameters
+        ----------
+        year : str
+            Year folder name (e.g., "2023" or "2025").
+        color : str
+            Pin color name (e.g., "black", "red").
+            
+        Returns
+        -------
+        np.ndarray
+            HSV color array [H, S, V].
+        """
+        cache_key = (year, color)
+        if cache_key in self._ref_color_cache:
+            return self._ref_color_cache[cache_key]
+        
+        ref_img_path = self.pin_ref_folder / year / f"{color}.png"
+        if not ref_img_path.exists():
+            raise FileNotFoundError(
+                f"Pin reference image not found: {ref_img_path}"
+            )
+        
+        ref_color_imarray = plt.imread(str(ref_img_path))
+        
+        # Extract masked pixels (alpha == 1)
+        mask = ref_color_imarray[:, :, 3] == 1
+        ref_color_masked = ref_color_imarray[mask]
+        
+        # Convert to HSV and get median
+        hsv = np.median(
+            skimage.color.rgb2hsv(ref_color_masked[:, 0:3]), 
+            axis=0
+        )
+        
+        self._ref_color_cache[cache_key] = hsv
+        logger.debug(f"Loaded ref color for {cache_key}: {hsv}")
+        return hsv
+
+    def get(self, potato_id, 
+            thresh=None,  # for color diff
+            nb_points=40, radius=0.005,  # for denoise
+            visualize=False, show=False
+        ):
+        """
+        Get SfM point cloud with pin segmentation.
+        
+        Parameters
+        ----------
+        potato_id : str
+            The name of potato, remove the file suffix.
         thresh : float, optional
-            The threshold for calcuating color differences 
-            between pin and potato surface, by default None
-        nb_points | radius : float, opional
-            The number of points to denoise point cloud, 
-            the parameter of `remove_radius_outlier` in open3d
-        visualize: bool
-            Return data for visualization
-        show: bool
-            Whether show ths intermediate results for debugging
+            The threshold for calculating color differences 
+            between pin and potato surface, by default None.
+        nb_points : int, optional
+            Number of points for radius outlier removal.
+        radius : float, optional
+            Radius for outlier removal.
+        visualize : bool
+            Return data for visualization.
+        show : bool
+            Whether show the intermediate results for debugging.
 
         Returns
         -------
-        sfm_pcd
-            whole potato point cloud
-        sfm_pin_pcd
-            point cloud of pin on potato surface 
-        sfm_pin_idx
-            the index of pin points in whole potato point cloud
+        dict
+            Dictionary containing:
+            - 'pcd': whole potato point cloud
+            - 'pin_pcd': point cloud of pin on potato surface
+            - 'pin_idx': the index of pin points in whole potato point cloud
         """
-
-        # rc -> results_container
-        rc = self.hsv_ref_pin(
-            self.sfm_pcd_folder, potato_id, self.ref_color_hsv, 
-            thresh, nb_points, radius, visualize, show)
+        logger.info(f"SfMPinFetcher.get() called with potato_id={potato_id}")
         
-        rc['pin_pcd'] = rc['pcd'].select_by_index(rc['pin_idx'])
-
-        return rc
-
-    @staticmethod
-    def get_ref_color(ref_folder):
-
-        ref_color_folder = pathlib.Path(ref_folder)
-
-        ref_color_rgb = []
-        ref_color_hsv = {}
-
-        for pin_img_file in os.listdir(ref_color_folder):
-
-            pin_id = pin_img_file.replace('.png', '')
-
-            ref_img_path = ref_color_folder / pin_img_file
-
-            ref_color_imarray = plt.imread( str(ref_img_path) )
-
-            mask = ref_color_imarray[:,:,3] == 1
-
-            ref_color_masked = ref_color_imarray[mask]
-
-            ref_color_rgb.append(np.median(ref_color_masked[:,0:3], axis=0))
-            ref_color_hsv[pin_id] = np.median(skimage.color.rgb2hsv(ref_color_masked[:,0:3]), axis=0)
-
-        # custom_colormap = ListedColormap(np.asarray(ref_color_rgb))
-
-        return ref_color_hsv
+        try:
+            # Get year and pin color for this potato
+            year, pin_color = self._get_potato_info(potato_id)
+            logger.debug(f"Got potato info: year={year}, pin_color={pin_color}")
+            
+            # Get reference HSV color
+            ref_color_hsv = self._get_ref_color_hsv(year, pin_color)
+            logger.debug(f"Got ref color HSV: {ref_color_hsv}")
+            
+            # Run HSV-based pin segmentation
+            logger.debug(f"Running hsv_ref_pin for {potato_id}")
+            rc = self.hsv_ref_pin(
+                self.sfm_pcd_folder, potato_id, ref_color_hsv, 
+                thresh, nb_points, radius, visualize, show
+            )
+            
+            rc['pin_pcd'] = rc['pcd'].select_by_index(rc['pin_idx'])
+            logger.info(f"Successfully processed {potato_id}")
+            return rc
+            
+        except Exception as e:
+            logger.exception(f"Error in SfMPinFetcher.get() for {potato_id}")
+            raise
 
     @staticmethod
     def get_hull_volume(o3d_pcd):
+        # Check for empty point cloud
+        n_points = len(o3d_pcd.points)
+        if n_points < 4:
+            logger.warning(f"Point cloud has only {n_points} points, cannot compute hull")
+            return 0.0
+            
         pin_hull = o3d_pcd.compute_convex_hull()[0]
         # still not watertight
         if not pin_hull.is_watertight():
-            warnings.warn("Open3d kernel produced a non-watertight convex hull, using SciPy kernel instead")
-            # o3d.visualization.draw_geometries([o3d_pcd, pin_hull])
+            warnings.warn(
+                "Open3d kernel produced a non-watertight convex hull, "
+                "using SciPy kernel instead"
+            )
             hull = ConvexHull(np.asarray(o3d_pcd.points))
-            # 获取凸包的体积
             volume = hull.volume
-            return volume * 1000 ** 3 # mm3
+            return volume * 1000 ** 3  # mm3
         else:
-            hull_volume = pin_hull.get_volume() * 1000 ** 3 # mm3
+            hull_volume = pin_hull.get_volume() * 1000 ** 3  # mm3
             return hull_volume
 
     def iter_hull_volume_by_thresh(self, sfm_pcd, color_distance_norm, thresh):
 
         pin_idx = np.where(color_distance_norm < thresh)[0]
+        
+        if len(pin_idx) == 0:
+            logger.warning(f"No points found with thresh={thresh}")
+            return 0.0, pin_idx
 
         # calculate volume, if too large needs denoise
         pin_pcd = sfm_pcd.select_by_index(pin_idx)
-        hull_volume = self.get_hull_volume(pin_pcd) # mm3
+        hull_volume = self.get_hull_volume(pin_pcd)  # mm3
 
         return hull_volume, pin_idx
 
     def hsv_ref_pin(self,
         sfm_pcd_folder, potato_id, 
-        ref_color_hsv, thresh=None, # for color diff
-        nb_points=40, radius=0.005, # for denoise
+        ref_color_hsv, thresh=None,  # for color diff
+        nb_points=40, radius=0.005,  # for denoise
         visualize=False, show=False
     ):
         # get the sfm pcd
         sfm_pcd_path = sfm_pcd_folder / potato_id / f"{potato_id}_30000.ply"
-        sfm_pcd = o3d.io.read_point_cloud( str(sfm_pcd_path) )
+        logger.debug(f"Reading SfM point cloud: {sfm_pcd_path}")
+        if not sfm_pcd_path.exists():
+            raise FileNotFoundError(f"SfM PLY file not found: {sfm_pcd_path}")
+        sfm_pcd = o3d.io.read_point_cloud(str(sfm_pcd_path))
 
         colors = np.asarray(sfm_pcd.colors)
 
         colors_hsv = skimage.color.rgb2hsv(colors)
 
-        
-        # color_distance = abs(colors_hsv - ref_color_hsv[ potato_id.split('-')[-1] ]).sum(axis=1)
-        color_distance_diff = abs(colors_hsv - ref_color_hsv[ potato_id.split('-')[-1] ])
+        # Calculate color distance using the single ref_color_hsv
+        color_distance_diff = abs(colors_hsv - ref_color_hsv)
         # hue -> circular distances
-        need_hue_reverse = color_distance_diff[:,0] > 0.5
-        color_distance_diff[need_hue_reverse, 0] = 1 - color_distance_diff[need_hue_reverse, 0]
+        need_hue_reverse = color_distance_diff[:, 0] > 0.5
+        color_distance_diff[need_hue_reverse, 0] = (
+            1 - color_distance_diff[need_hue_reverse, 0]
+        )
 
-        HSV_WEIGHT = [0.8,0.1,0.1]
-        color_distance_weight = color_distance_diff * np.array(HSV_WEIGHT)  # hsv weight
+        HSV_WEIGHT = [0.8, 0.1, 0.1]
+        color_distance_weight = color_distance_diff * np.array(HSV_WEIGHT)
         color_distance = color_distance_weight.sum(axis=1)
 
         # 定义一个Normalize对象，用于将数据值归一化到[0, 1]的范围

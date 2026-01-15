@@ -26,24 +26,23 @@ class DataConfig:
     ----------
     dataset_root : Path
         Root folder for the dataset (contains 1_rgbd, 2_sfm, 3_pair).
-    pin_ref_folder : Path
-        Folder containing pin reference color images.
     output_folder : Path, optional
         Custom output folder for transform matrices.
         Defaults to dataset_root / "3_pair/tmatrix".
 
+    Notes
+    -----
+    Pin reference folder is fixed at dataset_root / 2_sfm / 3_pin_refs.
+    CSV file is at dataset_root / 3_pair / ground_truth_2025.csv.
+
     Examples
     --------
-    >>> config = DataConfig(
-    ...     dataset_root=Path("/data/3DPotatoTwin"),
-    ...     pin_ref_folder=Path("/app/pin_ref"),
-    ... )
+    >>> config = DataConfig(dataset_root=Path("/data/3DPotatoTwin"))
     >>> config.output_folder
     PosixPath('/data/3DPotatoTwin/3_pair/tmatrix')
     """
 
     dataset_root: Path
-    pin_ref_folder: Path
     output_folder: Optional[Path] = None
 
     def __post_init__(self) -> None:
@@ -60,6 +59,11 @@ class DataConfig:
     def sfm_folder(self) -> Path:
         """Path to SfM point cloud folder."""
         return self.dataset_root / "2_sfm/2_pcd"
+
+    @property
+    def csv_file(self) -> Path:
+        """Path to ground truth CSV file."""
+        return self.dataset_root / "3_pair/ground_truth_2025.csv"
 
 
 class DataLoader:
@@ -81,10 +85,7 @@ class DataLoader:
 
     Examples
     --------
-    >>> config = DataConfig(
-    ...     dataset_root=Path("/data"),
-    ...     pin_ref_folder=Path("/app/pin_ref"),
-    ... )
+    >>> config = DataConfig(dataset_root=Path("/data"))
     >>> loader = DataLoader(config)
     >>> ids = loader.get_ids()
     >>> rgbd_data = loader.load_rgbd("2R1-1")
@@ -103,7 +104,7 @@ class DataLoader:
         if self._sfm_fetcher is None:
             self._sfm_fetcher = SfMPinFetcher(
                 self.config.dataset_root,
-                self.config.pin_ref_folder,
+                self.config.csv_file,
             )
 
     def get_ids(self) -> list[str]:

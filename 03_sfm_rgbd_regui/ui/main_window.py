@@ -112,7 +112,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(8)
 
         # Folder selection group
-        folder_group = QGroupBox("Folders")
+        folder_group = QGroupBox("Dataset")
         folder_layout = QVBoxLayout(folder_group)
 
         # Dataset root
@@ -122,14 +122,6 @@ class MainWindow(QMainWindow):
         self._btn_dataset.clicked.connect(self._on_select_dataset)
         folder_layout.addWidget(self._lbl_dataset)
         folder_layout.addWidget(self._btn_dataset)
-
-        # Pin reference
-        self._lbl_pinref = QLabel("Pin Ref: Not selected")
-        self._lbl_pinref.setWordWrap(True)
-        self._btn_pinref = QPushButton("Select Pin Reference Folder...")
-        self._btn_pinref.clicked.connect(self._on_select_pinref)
-        folder_layout.addWidget(self._lbl_pinref)
-        folder_layout.addWidget(self._btn_pinref)
 
         layout.addWidget(folder_group)
 
@@ -259,12 +251,10 @@ class MainWindow(QMainWindow):
 
         # Last used folders
         dataset = self._settings.value("last_dataset")
-        pinref = self._settings.value("last_pinref")
 
         if dataset and Path(dataset).exists():
             self._lbl_dataset.setText(f"Dataset: {dataset}")
-        if pinref and Path(pinref).exists():
-            self._lbl_pinref.setText(f"Pin Ref: {pinref}")
+            self._try_init_loader()
 
     def _save_settings(self) -> None:
         """Save current settings."""
@@ -283,33 +273,16 @@ class MainWindow(QMainWindow):
             self._settings.setValue("last_dataset", folder)
             self._try_init_loader()
 
-    @Slot()
-    def _on_select_pinref(self) -> None:
-        """Handle pin reference folder selection."""
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            "Select Pin Reference Folder",
-            str(Path.home()),
-        )
-        if folder:
-            self._lbl_pinref.setText(f"Pin Ref: {folder}")
-            self._settings.setValue("last_pinref", folder)
-            self._try_init_loader()
-
     def _try_init_loader(self) -> None:
-        """Try to initialize the data loader if both folders are set."""
+        """Try to initialize the data loader if dataset folder is set."""
         dataset = self._settings.value("last_dataset")
-        pinref = self._settings.value("last_pinref")
 
-        if not dataset or not pinref:
+        if not dataset:
             return
-        if not Path(dataset).exists() or not Path(pinref).exists():
+        if not Path(dataset).exists():
             return
 
-        self._config = DataConfig(
-            dataset_root=Path(dataset),
-            pin_ref_folder=Path(pinref),
-        )
+        self._config = DataConfig(dataset_root=Path(dataset))
         self._loader = DataLoader(self._config)
         self._aligner = Aligner(
             params=self._param_panel.get_params(),
