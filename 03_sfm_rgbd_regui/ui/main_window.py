@@ -328,14 +328,16 @@ class MainWindow(QMainWindow):
                 status_callback=self._update_statusbar,
             )
 
+            logger.info("Loaded SfM data: {}", self._current_sfm)
+            logger.info("Loaded RGBD data: {}", self._current_rgbd)
+
             # Set point clouds in viewer
-            self._viewer.set_sfm_cloud(self._current_sfm["pcd"])
-            self._viewer.set_rgbd_cloud(self._current_rgbd["pcd"])
+            self._viewer.set_raw_cloud(self._current_sfm["pcd"], self._current_rgbd["pcd"])
             
             # --- 1. SfM Pin Tab Data ---
             # Pass the data loaded by SfMPinFetcher directly to the viewer
             # It already contains 'pcd', 'pcd_offset_colormap', 'pin_pcd_strengthen'
-            self._viewer.set_sfm_pin_data(self._current_sfm)
+            self._viewer.set_sfm_pin_data(self._current_sfm['pin_idx'])
 
             # --- 2. Pin Detection Tab Data ---
             # Calculate pin center geometry (disk, arrow) for SfM

@@ -4,7 +4,7 @@ PyVista-based 3D viewer widget for point cloud visualization.
 
 Uses pyvistaqt for native Qt embedding with interactive controls.
 """
-
+import copy
 from typing import Optional
 
 import numpy as np
@@ -56,8 +56,10 @@ class Viewer3D(QWidget):
         """Initialize the 3D viewer widget."""
         super().__init__(parent)
         self._setup_ui()
-        self._sfm_pcd: Optional[o3d.geometry.PointCloud] = None
-        self._rgbd_pcd: Optional[o3d.geometry.PointCloud] = None
+        # Store original point clouds for raw view (unmodified by subsequent operations)
+        self._sfm_pcd_raw: Optional[o3d.geometry.PointCloud] = None
+        self._rgbd_pcd_raw: Optional[o3d.geometry.PointCloud] = None
+
         self._sfm_pin_data: Optional[dict] = None
         self._pin_detection_data: Optional[dict] = None
         self._transform: np.ndarray = np.eye(4)
@@ -87,6 +89,9 @@ class Viewer3D(QWidget):
         self._sfm_pin_colorbar_label = QLabel()
         self._sfm_pin_colorbar_label.setAlignment(Qt.AlignCenter)
         self._sfm_pin_colorbar_label.setFixedHeight(80)
+        # Update colorbar
+        pixmap = self._generate_colorbar_pixmap()
+        self._sfm_pin_colorbar_label.setPixmap(pixmap)
         sfm_pin_layout.addWidget(self._sfm_pin_colorbar_label)
 
         self._tabs.addTab(self._plotter_raw, "Raw")
@@ -142,37 +147,20 @@ class Viewer3D(QWidget):
         
         return pv.PolyData()
 
-    def set_sfm_cloud(self, pcd: o3d.geometry.PointCloud) -> None:
+    def set_raw_cloud(self, sfm_pcd: o3d.geometry.PointCloud, rgbd_pcd: o3d.geometry.PointCloud) -> None:
         """
-        Set the SfM point cloud for display.
+        Set the raw point clouds for display.
 
         Parameters
         ----------
-        pcd : o3d.geometry.PointCloud
+        sfm_pcd : o3d.geometry.PointCloud
             SfM point cloud.
-        """
-        self._sfm_pcd = pcd
-        self._update_views()
-
-    def set_rgbd_cloud(
-        self,
-        pcd: o3d.geometry.PointCloud,
-        transform: Optional[np.ndarray] = None,
-    ) -> None:
-        """
-        Set the RGBD point cloud for display.
-
-        Parameters
-        ----------
-        pcd : o3d.geometry.PointCloud
+        rgbd_pcd : o3d.geometry.PointCloud
             RGBD point cloud.
-        transform : np.ndarray, optional
-            4x4 transformation matrix to apply.
         """
-        self._rgbd_pcd = pcd
-        if transform is not None:
-            self._transform = transform
-        self._update_views()
+        self._sfm_pcd_raw = copy.deepcopy(sfm_pcd)
+        self._rgbd_pcd_raw = copy.deepcopy(rgbd_pcd)
+        self._update_raw_view()
 
     def set_transform(self, transform: np.ndarray) -> None:
         """
@@ -217,11 +205,7 @@ class Viewer3D(QWidget):
         """
         self._sfm_pin_data = data
         
-        # Update colorbar
-        pixmap = self._generate_colorbar_pixmap()
-        self._sfm_pin_colorbar_label.setPixmap(pixmap)
-        
-        self._update_views()
+        self._update_sfm_pin_view()
 
     def set_pin_detection_data(self, data: dict) -> None:
         """
@@ -236,11 +220,12 @@ class Viewer3D(QWidget):
         self._update_views()
 
     def _update_raw_view(self) -> None:
-        """Update the raw (untransformed) view."""
+        """Update the raw (untransformed) view using original point cloud copies."""
         self._plotter_raw.clear()
 
-        if self._sfm_pcd is not None:
-            cloud = self._o3d_to_pyvista(self._sfm_pcd)
+        # Use raw copies to display original point clouds (unmodified by subsequent operations)
+        if self._sfm_pcd_raw is not None:
+            cloud = self._o3d_to_pyvista(self._sfm_pcd_raw)
             if "RGB" in cloud.array_names:
                 self._plotter_raw.add_mesh(
                     cloud,
@@ -257,8 +242,8 @@ class Viewer3D(QWidget):
                     render_points_as_spheres=True,
                 )
 
-        if self._rgbd_pcd is not None:
-            cloud = self._o3d_to_pyvista(self._rgbd_pcd)
+        if self._rgbd_pcd_raw is not None:
+            cloud = self._o3d_to_pyvista(self._rgbd_pcd_raw)
             if "RGB" in cloud.array_names:
                 self._plotter_raw.add_mesh(
                     cloud,
@@ -281,8 +266,8 @@ class Viewer3D(QWidget):
         """Update the aligned (transformed) view."""
         self._plotter_aligned.clear()
 
-        if self._sfm_pcd is not None:
-            cloud = self._o3d_to_pyvista(self._sfm_pcd)
+        if self._sfm_pcd_raw is not None:
+            cloud = self._o3d_to_pyvista(self._sfm_pcd_raw)
             if "RGB" in cloud.array_names:
                 self._plotter_aligned.add_mesh(
                     cloud,
@@ -302,7 +287,7 @@ class Viewer3D(QWidget):
         if self._rgbd_pcd is not None:
             # Apply transformation
             import copy
-            transformed = copy.deepcopy(self._rgbd_pcd)
+            transformed = copy.deepcopy(self._rgbd_pcd_raw)
             transformed.transform(self._transform)
             cloud = self._o3d_to_pyvista(transformed)
 
@@ -327,9 +312,9 @@ class Viewer3D(QWidget):
     def _update_views(self) -> None:
         """Update all visualization tabs."""
         self._update_raw_view()
-        self._update_aligned_view()
         self._update_sfm_pin_view()
         self._update_pin_detection_view()
+        self._update_aligned_view()
 
     def _add_mesh_to_plotter(self, plotter, geometry, offset=None, color=None, point_size=2):
         """Helper to add Open3D geometry to PyVista plotter."""
@@ -501,6 +486,8 @@ class Viewer3D(QWidget):
         """Clear all point clouds."""
         self._sfm_pcd = None
         self._rgbd_pcd = None
+        self._sfm_pcd_raw = None
+        self._rgbd_pcd_raw = None
         self._sfm_pin_data = None
         self._pin_detection_data = None
         self._transform = np.eye(4)
