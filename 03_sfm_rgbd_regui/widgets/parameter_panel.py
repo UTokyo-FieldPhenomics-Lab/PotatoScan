@@ -63,7 +63,7 @@ class ParameterPanel(QWidget):
         layout.setSpacing(8)
 
         # Pin Neighbor Group
-        pin_group = QGroupBox("Pin Neighbor")
+        pin_group = QGroupBox("Step 3: Pin Neighbor")
         pin_layout = QFormLayout(pin_group)
 
         self._spin_search_radius = QDoubleSpinBox()
@@ -85,7 +85,7 @@ class ParameterPanel(QWidget):
         layout.addWidget(pin_group)
 
         # ICP Group
-        icp_group = QGroupBox("ICP Refinement")
+        icp_group = QGroupBox("Step 4: Colored-ICP Refinement")
         icp_layout = QFormLayout(icp_group)
 
         self._spin_icp_threshold = QDoubleSpinBox()

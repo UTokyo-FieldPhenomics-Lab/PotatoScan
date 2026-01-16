@@ -113,10 +113,10 @@ class Viewer3D(QWidget):
         self._sfm_pin_colorbar_label.setPixmap(pixmap)
         sfm_pin_layout.addWidget(self._sfm_pin_colorbar_label)
 
-        self._tabs.addTab(self._plotter_raw, "Raw")
-        self._tabs.addTab(self._tab_sfm_pin_widget, "SfM Pin")
-        self._tabs.addTab(self._plotter_pin_detect, "Pin Detection")
-        self._tabs.addTab(self._plotter_aligned, "Aligned")
+        self._tabs.addTab(self._plotter_raw, "Step1: Raw")
+        self._tabs.addTab(self._tab_sfm_pin_widget, "Step2: SfM Pin")
+        self._tabs.addTab(self._plotter_pin_detect, "Step3: Pin Detection")
+        self._tabs.addTab(self._plotter_aligned, "Step4: Aligned")
 
         # Connect tab changes to update views
         self._tabs.currentChanged.connect(self._on_tab_changed)
