@@ -47,6 +47,8 @@ def save_result_json(
     hsv_weight: Optional[list] = None,
     hsv_denoise_threshold: Optional[float] = None,
     hsv_denoised_volume: Optional[float] = None,
+    peak_angles: Optional[Union[list, np.ndarray]] = None,
+    selected_peak_idx: Optional[int] = None,
 ) -> None:
     """
     Save alignment result to JSON file.
@@ -85,6 +87,10 @@ def save_result_json(
         HSV index denoise threshold.
     hsv_denoised_volume : float, optional
         HSV denoised volume.
+    peak_angles : list or np.ndarray, optional
+        List of potential local minima angles.
+    selected_peak_idx : int, optional
+        Index of the selected peak in the angles list.
 
     Examples
     --------
@@ -102,6 +108,8 @@ def save_result_json(
     ...     icp_iter_num=10,
     ...     icp_threshold=0.0005,
     ...     geometry_weight=0.1,
+    ...     peak_angles=[10, 100, 200],
+    ...     selected_peak_idx=1,
     ... )
     """
     output_path = Path(output_path)
@@ -137,6 +145,10 @@ def save_result_json(
                 "iter_num": icp_iter_num,
                 "iter_distance(m)": icp_threshold,
                 "geometry_weight": geometry_weight,
+            },
+            "rms_analysis": {
+                "potential_local_minima": peak_angles if peak_angles is not None else [],
+                "selected": selected_peak_idx if selected_peak_idx is not None else 0,
             },
         },
     }

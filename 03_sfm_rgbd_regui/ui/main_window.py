@@ -387,6 +387,8 @@ class MainWindow(QMainWindow):
 
             # Check for existing result and load parameters
             output_path = self._loader.get_output_path(pid)
+            selected_peak_idx = 0
+            
             if output_path.exists():
                 try:
                     result_json = load_result_json(output_path)
@@ -407,19 +409,24 @@ class MainWindow(QMainWindow):
                     # Update UI and Aligner
                     self._param_panel.set_params(saved_params)
                     self._aligner.update_params(saved_params)
+
+                    # Retrieve selected peak if available
+                    rms_analysis = meta.get("rms_analysis", {})
+                    selected_peak_idx = rms_analysis.get("selected", 0)
+                    
                     logger.info(f"Restored parameters from {output_path.name}")
                     
                 except Exception as e:
                     logger.warning(f"Failed to restore parameters from existing result: {e}")
 
             # Run alignment
-            self._run_alignment()
+            self._run_alignment(selected_peak_idx=selected_peak_idx)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load {pid}:\n{e}")
             self._status_bar.showMessage(f"Error loading {pid}")
 
-    def _run_alignment(self) -> None:
+    def _run_alignment(self, selected_peak_idx: int = 0) -> None:
         """Run the alignment pipeline."""
         if self._aligner is None or self._current_rgbd is None:
             logger.warning("Aligner or RGBD data missing")
@@ -438,6 +445,7 @@ class MainWindow(QMainWindow):
             self._current_result = self._aligner.compute_full_alignment(
                 self._current_rgbd,
                 self._current_sfm,
+                selected_peak=selected_peak_idx,
             )
             logger.success(f"Alignment complete. RMSE: {self._current_result.rmse}")
 
@@ -570,6 +578,8 @@ class MainWindow(QMainWindow):
                 hsv_weight=self._current_sfm.get("hsv_weight"),
                 hsv_denoise_threshold=self._current_sfm.get("stop_thresh"),
                 hsv_denoised_volume=self._current_sfm.get("stop_hull_volume"),
+                peak_angles=self._current_result.peak_angles,
+                selected_peak_idx=self._current_result.selected_peak_idx,
             )
 
             self._file_tree.set_completed(self._current_pid, True)
