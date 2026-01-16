@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -56,6 +57,14 @@ class PreferencesDialog(QDialog):
         "prev_peak": "Up",
         "next_peak": "Down",
     }
+
+    # Modifier key options for 3D viewer
+    MODIFIER_OPTIONS = {
+        "Alt": Qt.AltModifier,
+        "Ctrl": Qt.ControlModifier,
+        "Shift": Qt.ShiftModifier,
+    }
+    DEFAULT_MODIFIER = "Alt"
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         """Initialize the preferences dialog."""
@@ -116,6 +125,29 @@ class PreferencesDialog(QDialog):
         self._add_shortcut_row(actions_layout, "save_and_next", "Save & Next:")
 
         layout.addWidget(actions_group)
+
+        # 3D Viewer group
+        viewer_group = QGroupBox("3D Viewer")
+        viewer_layout = QFormLayout(viewer_group)
+
+        # Modifier key for point size adjustment
+        self._cmb_point_size_modifier = QComboBox()
+        self._cmb_point_size_modifier.addItems(list(self.MODIFIER_OPTIONS.keys()))
+        self._cmb_point_size_modifier.setCurrentText(self.DEFAULT_MODIFIER)
+        self._cmb_point_size_modifier.setToolTip(
+            "Modifier key + scroll wheel to adjust point cloud size (1-10)"
+        )
+        viewer_layout.addRow("Point Size Modifier:", self._cmb_point_size_modifier)
+
+        # Description
+        viewer_desc = QLabel(
+            "<i>Hold modifier key + scroll wheel to change point cloud size.</i>"
+        )
+        viewer_desc.setWordWrap(True)
+        viewer_desc.setStyleSheet("color: gray; margin-top: 4px;")
+        viewer_layout.addRow("", viewer_desc)
+
+        layout.addWidget(viewer_group)
         layout.addStretch()
 
         return widget
@@ -171,6 +203,9 @@ class PreferencesDialog(QDialog):
             default = self.DEFAULT_SHORTCUTS.get(action_id, "")
             edit.setKeySequence(QKeySequence(default))
 
+        # Restore modifier key
+        self._cmb_point_size_modifier.setCurrentText(self.DEFAULT_MODIFIER)
+
         # Restore developer settings
         self._chk_debug_log.setChecked(False)
 
@@ -224,4 +259,39 @@ class PreferencesDialog(QDialog):
             True to enable debug logging.
         """
         self._chk_debug_log.setChecked(enabled)
+
+    def get_point_size_modifier(self) -> Qt.KeyboardModifier:
+        """
+        Get the modifier key for 3D viewer point size adjustment.
+
+        Returns
+        -------
+        Qt.KeyboardModifier
+            The selected modifier key.
+        """
+        key_name = self._cmb_point_size_modifier.currentText()
+        return self.MODIFIER_OPTIONS.get(key_name, Qt.AltModifier)
+
+    def get_point_size_modifier_name(self) -> str:
+        """
+        Get the modifier key name as string.
+
+        Returns
+        -------
+        str
+            Modifier key name ("Alt", "Ctrl", or "Shift").
+        """
+        return self._cmb_point_size_modifier.currentText()
+
+    def set_point_size_modifier(self, modifier_name: str) -> None:
+        """
+        Set the modifier key for point size adjustment.
+
+        Parameters
+        ----------
+        modifier_name : str
+            Modifier key name ("Alt", "Ctrl", or "Shift").
+        """
+        if modifier_name in self.MODIFIER_OPTIONS:
+            self._cmb_point_size_modifier.setCurrentText(modifier_name)
 

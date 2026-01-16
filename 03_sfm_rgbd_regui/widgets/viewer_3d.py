@@ -11,7 +11,7 @@ import numpy as np
 import open3d as o3d
 import pyvista as pv
 from pyvistaqt import QtInteractor
-from PySide6.QtCore import Signal, Slot
+from PySide6.QtCore import Signal, Slot, QObject, QEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QTabWidget,
@@ -53,11 +53,28 @@ class Viewer3D(QWidget):
     """
 
     view_changed = Signal()
+    point_size_changed = Signal(int)  # Emitted when point size changes
+
+    # Point size constraints
+    POINT_SIZE_MIN: int = 1
+    POINT_SIZE_MAX: int = 10
+    POINT_SIZE_DEFAULT: int = 2
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         """Initialize the 3D viewer widget."""
         super().__init__(parent)
+        
+        # Point size and modifier key settings
+        self._point_size: int = self.POINT_SIZE_DEFAULT
+        self._point_size_modifier: Qt.KeyboardModifier = Qt.AltModifier
+        
+        # Track overlay text actors for each plotter
+        self._overlay_actors: dict = {}
+        
         self._setup_ui()
+        self._install_wheel_event_filter()
+        self._setup_camera_callbacks()
+        
         # Store original point clouds for raw view (unmodified by subsequent operations)
         self._sfm_pcd_raw: Optional[o3d.geometry.PointCloud] = None
         self._rgbd_pcd_raw: Optional[o3d.geometry.PointCloud] = None
@@ -103,6 +120,206 @@ class Viewer3D(QWidget):
 
         # Connect tab changes to update views
         self._tabs.currentChanged.connect(self._on_tab_changed)
+
+    def _install_wheel_event_filter(self) -> None:
+        """Install event filter on all plotters for wheel events."""
+        logger.debug("[PointSize] Installing wheel event filter on all plotters")
+        for plotter in self._get_all_plotters():
+            plotter.installEventFilter(self)
+            logger.debug(f"[PointSize] Event filter installed on: {plotter.objectName() or type(plotter).__name__}")
+
+    def _get_all_plotters(self) -> list:
+        """Return a list of all QtInteractor plotters."""
+        return [
+            self._plotter_raw,
+            self._plotter_aligned,
+            self._plotter_pin_detect,
+            self._plotter_sfm_pin,
+        ]
+
+    def _setup_camera_callbacks(self) -> None:
+        """Set up camera callbacks to hide overlay text on interaction.
+        
+        Note: We use event filter instead of VTK observers since QtInteractor
+        doesn't expose add_observer directly.
+        """
+        # Camera callbacks are handled in eventFilter via MouseButtonPress events
+        pass
+
+    def _on_camera_interaction(self) -> None:
+        """Called when camera interaction starts, hides overlay text."""
+        self._hide_all_overlays()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        """
+        Filter wheel events for point size adjustment.
+
+        Parameters
+        ----------
+        watched : QObject
+            The object being watched.
+        event : QEvent
+            The event to filter.
+
+        Returns
+        -------
+        bool
+            True if event was handled, False otherwise.
+        """
+        # Only log wheel events to avoid spam
+        if event.type() == QEvent.Wheel:
+            modifiers = event.modifiers()
+            logger.debug(
+                f"[PointSize] Wheel event received - "
+                f"watched={type(watched).__name__}, "
+                f"modifiers={modifiers.value}, "
+                f"expected_modifier={self._point_size_modifier.value}, "
+                f"Alt pressed={bool(modifiers & Qt.AltModifier)}, "
+                f"Ctrl pressed={bool(modifiers & Qt.ControlModifier)}, "
+                f"Shift pressed={bool(modifiers & Qt.ShiftModifier)}"
+            )
+            
+            # Check if the modifier key is pressed
+            if modifiers & self._point_size_modifier:
+                # Adjust point size based on scroll direction
+                # Note: On KDE Plasma, Alt+scroll triggers horizontal scroll (X axis)
+                # So we use X axis when Y is 0
+                angle_delta = event.angleDelta()
+                delta_y = angle_delta.y()
+                delta_x = angle_delta.x()
+                
+                # Use Y axis primarily, fall back to X axis (for KDE Plasma compatibility)
+                delta = delta_y if delta_y != 0 else delta_x
+                
+                logger.debug(
+                    f"[PointSize] Modifier key matched! "
+                    f"angleDelta=({delta_x}, {delta_y}), using delta={delta}"
+                )
+                
+                if delta > 0:
+                    self._adjust_point_size(1)
+                elif delta < 0:
+                    self._adjust_point_size(-1)
+                return True  # Consume the event
+            else:
+                logger.debug("[PointSize] Modifier key NOT matched, passing event through.")
+
+        return super().eventFilter(watched, event)
+
+    def _adjust_point_size(self, delta: int) -> None:
+        """
+        Adjust point size by delta, clamped to valid range.
+
+        Parameters
+        ----------
+        delta : int
+            Amount to change point size (+1 or -1).
+        """
+        old_size = self._point_size
+        new_size = self._point_size + delta
+        new_size = max(self.POINT_SIZE_MIN, min(self.POINT_SIZE_MAX, new_size))
+        
+        logger.debug(
+            f"[PointSize] _adjust_point_size called: "
+            f"delta={delta}, old={old_size}, new={new_size}"
+        )
+        
+        if new_size != self._point_size:
+            self._point_size = new_size
+            logger.info(f"[PointSize] Point size changed: {old_size} -> {self._point_size}")
+            self.point_size_changed.emit(self._point_size)
+            self._show_point_size_overlay()
+            logger.debug("[PointSize] Triggering _update_views()")
+            self._update_views()
+            logger.debug("[PointSize] _update_views() complete")
+        else:
+            logger.debug(f"[PointSize] Point size unchanged (already at limit: {self._point_size})")
+
+    def _show_point_size_overlay(self) -> None:
+        """Show point size overlay text on all plotters."""
+        text = f"Point size: {self._point_size}"
+        for plotter in self._get_all_plotters():
+            # Remove existing overlay if present
+            plotter_id = id(plotter)
+            if plotter_id in self._overlay_actors:
+                try:
+                    plotter.remove_actor(self._overlay_actors[plotter_id])
+                except Exception:
+                    pass
+            
+            # Add new overlay text at bottom-left
+            actor = plotter.add_text(
+                text,
+                position="lower_left",
+                font_size=12,
+                color="white",
+                shadow=True,
+                name=f"point_size_overlay_{plotter_id}",
+            )
+            self._overlay_actors[plotter_id] = actor
+
+    def _hide_all_overlays(self) -> None:
+        """Hide all point size overlay texts."""
+        for plotter in self._get_all_plotters():
+            plotter_id = id(plotter)
+            if plotter_id in self._overlay_actors:
+                try:
+                    plotter.remove_actor(self._overlay_actors[plotter_id])
+                except Exception:
+                    pass
+                del self._overlay_actors[plotter_id]
+
+    def get_point_size(self) -> int:
+        """
+        Get the current point size.
+
+        Returns
+        -------
+        int
+            Current point size (1-10).
+        """
+        return self._point_size
+
+    def set_point_size(self, size: int) -> None:
+        """
+        Set the point size.
+
+        Parameters
+        ----------
+        size : int
+            Point size (clamped to 1-10).
+        """
+        size = max(self.POINT_SIZE_MIN, min(self.POINT_SIZE_MAX, size))
+        if size != self._point_size:
+            self._point_size = size
+            self.point_size_changed.emit(self._point_size)
+            self._update_views()
+
+    def get_point_size_modifier(self) -> Qt.KeyboardModifier:
+        """
+        Get the modifier key for point size adjustment.
+
+        Returns
+        -------
+        Qt.KeyboardModifier
+            The modifier key (default: Qt.AltModifier).
+        """
+        return self._point_size_modifier
+
+    def set_point_size_modifier(self, modifier: Qt.KeyboardModifier) -> None:
+        """
+        Set the modifier key for point size adjustment.
+
+        Parameters
+        ----------
+        modifier : Qt.KeyboardModifier
+            The modifier key (e.g., Qt.AltModifier, Qt.ControlModifier).
+        """
+        logger.debug(
+            f"[PointSize] set_point_size_modifier called: "
+            f"old={self._point_size_modifier.value}, new={modifier.value}"
+        )
+        self._point_size_modifier = modifier
 
     def _o3d_to_pyvista(
         self,
@@ -237,14 +454,14 @@ class Viewer3D(QWidget):
                     cloud,
                     scalars="RGB",
                     rgb=True,
-                    point_size=2,
+                    point_size=self._point_size,
                     render_points_as_spheres=True,
                 )
             else:
                 self._plotter_raw.add_mesh(
                     cloud,
                     color="blue",
-                    point_size=2,
+                    point_size=self._point_size,
                     render_points_as_spheres=True,
                 )
 
@@ -255,14 +472,14 @@ class Viewer3D(QWidget):
                     cloud,
                     scalars="RGB",
                     rgb=True,
-                    point_size=2,
+                    point_size=self._point_size,
                     render_points_as_spheres=True,
                 )
             else:
                 self._plotter_raw.add_mesh(
                     cloud,
                     color="red",
-                    point_size=2,
+                    point_size=self._point_size,
                     render_points_as_spheres=True,
                 )
 
@@ -279,14 +496,14 @@ class Viewer3D(QWidget):
                     cloud,
                     scalars="RGB",
                     rgb=True,
-                    point_size=2,
+                    point_size=self._point_size,
                     render_points_as_spheres=True,
                 )
             else:
                 self._plotter_aligned.add_mesh(
                     cloud,
                     color="blue",
-                    point_size=2,
+                    point_size=self._point_size,
                     render_points_as_spheres=True,
                 )
 
@@ -302,14 +519,14 @@ class Viewer3D(QWidget):
                     cloud,
                     scalars="RGB",
                     rgb=True,
-                    point_size=2,
+                    point_size=self._point_size,
                     render_points_as_spheres=True,
                 )
             else:
                 self._plotter_aligned.add_mesh(
                     cloud,
                     color="red",
-                    point_size=2,
+                    point_size=self._point_size,
                     render_points_as_spheres=True,
                 )
 
@@ -322,7 +539,7 @@ class Viewer3D(QWidget):
         self._update_pin_detection_view()
         self._update_aligned_view()
 
-    def _add_mesh_to_plotter(self, plotter, geometry, offset=None, color=None, point_size=2):
+    def _add_mesh_to_plotter(self, plotter, geometry, offset=None, color=None, point_size=None):
         """Helper to add Open3D geometry to PyVista plotter."""
         if geometry is None:
             return
@@ -348,7 +565,7 @@ class Viewer3D(QWidget):
             kwargs["color"] = color
         
         if isinstance(geometry, o3d.geometry.PointCloud):
-            kwargs["point_size"] = point_size
+            kwargs["point_size"] = point_size if point_size else self._point_size
             kwargs["render_points_as_spheres"] = True
             
         plotter.add_mesh(mesh, **kwargs)

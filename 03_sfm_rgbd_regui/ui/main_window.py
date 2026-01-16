@@ -256,6 +256,13 @@ class MainWindow(QMainWindow):
         dev_mode = self._settings.value("developer_mode", False, type=bool)
         self._apply_log_level(dev_mode)
 
+        # Point size modifier for 3D viewer
+        modifier_name = self._settings.value(
+            "point_size_modifier",
+            PreferencesDialog.DEFAULT_MODIFIER,
+        )
+        self._apply_point_size_modifier(modifier_name)
+
         # Last used folders
         dataset = self._settings.value("last_dataset")
 
@@ -558,6 +565,12 @@ class MainWindow(QMainWindow):
         dialog.set_developer_mode(
             self._settings.value("developer_mode", False, type=bool)
         )
+        dialog.set_point_size_modifier(
+            self._settings.value(
+                "point_size_modifier",
+                PreferencesDialog.DEFAULT_MODIFIER,
+            )
+        )
 
         if dialog.exec():
             # Save and apply shortcuts
@@ -571,6 +584,11 @@ class MainWindow(QMainWindow):
             dev_mode = dialog.get_developer_mode()
             self._settings.setValue("developer_mode", dev_mode)
             self._apply_log_level(dev_mode)
+
+            # Save and apply point size modifier
+            modifier_name = dialog.get_point_size_modifier_name()
+            self._settings.setValue("point_size_modifier", modifier_name)
+            self._apply_point_size_modifier(modifier_name)
 
     def _apply_log_level(self, debug_enabled: bool) -> None:
         """
@@ -586,6 +604,24 @@ class MainWindow(QMainWindow):
         level = "DEBUG" if debug_enabled else "INFO"
         logger.add(sys.stderr, level=level)
         logger.info(f"Log level set to {level}")
+
+    def _apply_point_size_modifier(self, modifier_name: str) -> None:
+        """
+        Apply the point size modifier key to the 3D viewer.
+
+        Parameters
+        ----------
+        modifier_name : str
+            Modifier key name ("Alt", "Ctrl", or "Shift").
+        """
+        logger.debug(f"[PointSize] _apply_point_size_modifier called with: {modifier_name}")
+        modifier = PreferencesDialog.MODIFIER_OPTIONS.get(
+            modifier_name,
+            PreferencesDialog.MODIFIER_OPTIONS[PreferencesDialog.DEFAULT_MODIFIER],
+        )
+        logger.debug(f"[PointSize] Resolved modifier value: {modifier.value} (Qt.AltModifier={Qt.AltModifier.value})")
+        self._viewer.set_point_size_modifier(modifier)
+        logger.info(f"[PointSize] Point size modifier set to: {modifier_name} (value={modifier.value})")
 
     @Slot()
     def _on_about(self) -> None:
