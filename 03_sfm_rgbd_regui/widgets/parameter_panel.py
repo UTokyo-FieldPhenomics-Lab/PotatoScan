@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Signal, Slot, QTimer, Qt
+from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
@@ -19,11 +20,16 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QVBoxLayout,
     QWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
 )
+import numpy as np
 
 # Add parent for core imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.alignment import AlignmentParams
+
 
 class ParameterPanel(QWidget):
     """
@@ -45,7 +51,6 @@ class ParameterPanel(QWidget):
     >>> panel.params_changed.connect(on_params_change)
     >>> params = panel.get_params()
     """
-
     params_changed = Signal(object)  # AlignmentParams
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -127,7 +132,62 @@ class ParameterPanel(QWidget):
         icp_layout.addRow("Geometry Weight:", weight_widget)
 
         layout.addWidget(icp_group)
+        
+        # Transform Matrix Table
+        matrix_group = QGroupBox("Transform Matrix")
+        matrix_layout = QVBoxLayout(matrix_group)
+        matrix_layout.setAlignment(Qt.AlignCenter)
+
+        self._table_matrix = QTableWidget(4, 4)
+        self._table_matrix.verticalHeader().setVisible(False)
+        self._table_matrix.horizontalHeader().setVisible(False)
+        self._table_matrix.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._table_matrix.setSelectionMode(QTableWidget.NoSelection)
+        self._table_matrix.setFocusPolicy(Qt.NoFocus)
+
+        # Disable scrollbars to prevent whitespace issues
+        self._table_matrix.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._table_matrix.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        # Stretch rows and columns to fill the fixed size
+        self._table_matrix.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._table_matrix.verticalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+        # Fixed size (width fits in 300px panel, height fits 4 rows)
+        self._table_matrix.setFixedSize(260, 125)
+
+        # Initialize identity
+        self.set_transform_matrix(np.eye(4), modified=False)
+        matrix_layout.addWidget(self._table_matrix)
+        
+        layout.addWidget(matrix_group)
         layout.addStretch()
+
+    def set_transform_matrix(self, matrix: np.ndarray, modified: bool = True) -> None:
+        """
+        Update the transform matrix table.
+
+        Parameters
+        ----------
+        matrix : np.ndarray
+            4x4 transformation matrix.
+        modified : bool, optional
+            If True, text color is green (unsaved/calc). If False, black (saved/default).
+        """
+        color = QColor("green") if modified else QColor("black")
+        brush = QBrush(color)
+
+        for i in range(4):
+            for j in range(4):
+                val = matrix[i, j]
+                item = self._table_matrix.item(i, j)
+                if not item:
+                    item = QTableWidgetItem()
+                    item.setTextAlignment(Qt.AlignCenter)
+                    self._table_matrix.setItem(i, j, item)
+                
+                item.setText(f"{val:.4f}")
+                item.setForeground(brush)
 
     def _connect_signals(self) -> None:
         """Connect internal signals."""

@@ -74,6 +74,7 @@ class MainWindow(QMainWindow):
         self._current_rgbd: Optional[dict] = None
         self._current_sfm: Optional[dict] = None
         self._current_result = None
+        self._is_dirty: bool = False
         self._settings = QSettings("PotatoScan", "RegistrationGUI")
 
         self._setup_ui()
@@ -317,10 +318,50 @@ class MainWindow(QMainWindow):
         pin_colors = self._loader.get_pin_colors()
         self._file_tree.set_items(ids, completed, pin_colors)
 
+    def _check_unsaved_changes(self) -> bool:
+        """
+        Check for unsaved changes and prompt user.
+
+        Returns
+        -------
+        bool
+            True if it's safe to proceed (Saved, Discarded, or No changes).
+            False if cancelled.
+        """
+        if not self._is_dirty:
+            return True
+
+        reply = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            f"Changes to {self._current_pid} have not been saved.\nSave before continuing?",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save,
+        )
+
+        if reply == QMessageBox.Save:
+            return self._save_result()
+        elif reply == QMessageBox.Discard:
+            return True
+        else:
+            return False
+
     @Slot(str)
     def _on_item_selected(self, pid: str) -> None:
         """Handle item selection in file tree."""
         if self._loader is None:
+            return
+
+        # Check for unsaved changes
+        if not self._check_unsaved_changes():
+            # Block selection change? Use the file tree logic if possible
+            # But the signal is already emitted. We might need to handle this better.
+            # For now, we proceed, but real app might revert selection.
+            # If we return here, the UI selected item is different from internal state.
+            
+            # Revert selection in tree to match current_pid
+            if self._current_pid:
+                self._file_tree.select_item(self._current_pid)
             return
 
         self._current_pid = pid
@@ -419,14 +460,14 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     logger.warning(f"Failed to restore parameters from existing result: {e}")
 
-            # Run alignment
-            self._run_alignment(selected_peak_idx=selected_peak_idx)
+            # Run alignment (initially clean)
+            self._run_alignment(selected_peak_idx=selected_peak_idx, is_dirty=False)
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load {pid}:\n{e}")
             self._status_bar.showMessage(f"Error loading {pid}")
 
-    def _run_alignment(self, selected_peak_idx: int = 0) -> None:
+    def _run_alignment(self, selected_peak_idx: int = 0, is_dirty: bool = True) -> None:
         """Run the alignment pipeline."""
         if self._aligner is None or self._current_rgbd is None:
             logger.warning("Aligner or RGBD data missing")
@@ -451,6 +492,15 @@ class MainWindow(QMainWindow):
 
             # Update views
             self._viewer.set_transform(self._current_result.transform_matrix)
+            
+            # Update dirty state
+            self._is_dirty = is_dirty
+            
+            # Update Table
+            self._param_panel.set_transform_matrix(
+                self._current_result.transform_matrix, 
+                modified=self._is_dirty
+            )
 
             # Update chart
             angles, rmses = self._current_result.rmse_curve
@@ -473,6 +523,8 @@ class MainWindow(QMainWindow):
             self._status_bar.showMessage(
                 f"{self._current_pid}: RMSE={self._current_result.rmse:.6f}"
             )
+            if self._is_dirty:
+                self._status_bar.showMessage(f"{self._current_pid} (Modified)")
 
         except Exception as e:
             logger.exception(f"Alignment failed for {self._current_pid}")
@@ -508,7 +560,7 @@ class MainWindow(QMainWindow):
         # Recompute ICP with new parameters
         if self._aligner is not None:
             self._aligner.update_params(params)
-            self._run_alignment()
+            self._run_alignment(is_dirty=True)
 
     @Slot(int)
     def _on_peak_changed(self, peak_idx: int) -> None:
@@ -524,6 +576,11 @@ class MainWindow(QMainWindow):
         self._viewer.set_transform(self._current_result.transform_matrix)
         self._status_bar.showMessage(
             f"{self._current_pid}: RMSE={self._current_result.rmse:.6f} (peak {peak_idx})"
+        )
+        self._is_dirty = True
+        self._param_panel.set_transform_matrix(
+            self._current_result.transform_matrix, 
+            modified=True
         )
 
     @Slot()
@@ -584,6 +641,14 @@ class MainWindow(QMainWindow):
 
             self._file_tree.set_completed(self._current_pid, True)
             self._status_bar.showMessage(f"Saved {self._current_pid}")
+            
+            # Reset dirty state
+            self._is_dirty = False
+            self._param_panel.set_transform_matrix(
+                self._current_result.transform_matrix, 
+                modified=False
+            )
+            
             return True
 
         except Exception as e:
