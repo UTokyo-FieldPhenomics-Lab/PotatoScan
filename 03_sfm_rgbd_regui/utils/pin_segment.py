@@ -150,20 +150,70 @@ class PinRegions:
 
         return mask_img
 
-
-    def process_pcd(self, img, dimg, bin_potato, bin_pin, name, gt_depth, paint_color=False, visualize=False):
+    def process_pcd(
+        self,
+        img,
+        dimg,
+        bin_potato,
+        bin_pin,
+        name,
+        max_depth_range=150,
+        max_depth_contribution=0.02,
+        depth_trunc=0.4,
+        paint_color=False,
+        visualize=False,
+    ):
+        """
+        Process RGBD image to extract pin point cloud.
+        
+        Parameters
+        ----------
+        img : np.ndarray
+            RGB image.
+        dimg : np.ndarray
+            Depth image.
+        bin_potato : np.ndarray
+            Binary mask for potato region.
+        bin_pin : np.ndarray
+            Binary mask for pin region.
+        name : str
+            Name for visualization.
+        max_depth_range : float, optional
+            Max depth range for histogram filtering. Default 150 (2023), use 100 for 2025.
+        max_depth_contribution : float, optional
+            Max depth contribution for histogram filtering. Default 0.02 (2023), use 0.05 for 2025.
+        depth_trunc : float, optional
+            Depth truncation for RGBD. Default 0.4 (2023), use 0.5 for 2025.
+        paint_color : bool, optional
+            Whether to paint pin uniform color.
+        visualize : bool, optional
+            Whether to show visualization.
+            
+        Returns
+        -------
+        o3d.geometry.PointCloud
+            Point cloud of the pin region.
+        """
         img_potato = np.multiply(img, np.expand_dims(bin_potato, axis=2))
         dimg_potato = np.multiply(dimg, bin_potato)
         dimg_potato_vis = dimg_potato.astype(np.uint8)
 
-        z_min, z_max = self.histogram_filtering(dimg, bin_potato, gt_depth, 0.02)
+        z_min, z_max = self.histogram_filtering(
+            dimg, bin_potato, max_depth_range, max_depth_contribution
+        )
         dimg_potato[dimg_potato < z_min] = 0
         dimg_potato[dimg_potato > z_max] = 0
 
         rgb_potato = o3d.geometry.Image((img_potato[:,:,::-1]).astype(np.uint8))
         depth_potato = o3d.geometry.Image(dimg_potato)
-        rgbd_potato = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb_potato, depth_potato, depth_scale=1000.0, depth_trunc=0.4, convert_rgb_to_intensity=False)
-        pcd_potato = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_potato, self.intrinsics)
+        rgbd_potato = o3d.geometry.RGBDImage.create_from_color_and_depth(
+            rgb_potato, depth_potato,
+            depth_scale=1000.0, depth_trunc=depth_trunc,
+            convert_rgb_to_intensity=False
+        )
+        pcd_potato = o3d.geometry.PointCloud.create_from_rgbd_image(
+            rgbd_potato, self.intrinsics
+        )
 
         img_pin = np.multiply(img, np.expand_dims(bin_pin, axis=2))
         dimg_pin = np.multiply(dimg, bin_pin)
@@ -171,15 +221,28 @@ class PinRegions:
 
         rgb_pin = o3d.geometry.Image((img_pin[:,:,::-1]).astype(np.uint8))
         depth_pin = o3d.geometry.Image(dimg_pin)
-        rgbd_pin = o3d.geometry.RGBDImage.create_from_color_and_depth(rgb_pin, depth_pin, depth_scale=1000.0, depth_trunc=0.4, convert_rgb_to_intensity=False)
-        pcd_pin = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_pin, self.intrinsics)
+        rgbd_pin = o3d.geometry.RGBDImage.create_from_color_and_depth(
+            rgb_pin, depth_pin,
+            depth_scale=1000.0, depth_trunc=depth_trunc,
+            convert_rgb_to_intensity=False
+        )
+        pcd_pin = o3d.geometry.PointCloud.create_from_rgbd_image(
+            rgbd_pin, self.intrinsics
+        )
         if paint_color:
             pcd_pin.paint_uniform_color([1, 1, 0])
 
         if visualize:
-            pcd_potato_vis = pcd_potato.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
-            pcd_pin_vis = pcd_pin.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
-            o3d.visualization.draw_geometries([pcd_potato_vis, pcd_pin_vis], window_name=f"{name} with pin region in yellow")
+            pcd_potato_vis = pcd_potato.transform(
+                [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
+            )
+            pcd_pin_vis = pcd_pin.transform(
+                [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
+            )
+            o3d.visualization.draw_geometries(
+                [pcd_potato_vis, pcd_pin_vis],
+                window_name=f"{name} with pin region in yellow"
+            )
 
         return pcd_pin
 
@@ -255,36 +318,44 @@ class RgbdPinFetcher(object):
         self.csv_file = rgbd_root / '3_pair/ground_truth_2025.csv'
         self.intrinsics_file = rgbd_root / '1_rgbd/0_camera_intrinsics/realsense_d405_camera_intrinsic.json'
         
-        # Load all COCO files that exist
+        # Load all COCO files that exist and create PinRegions for each
         self._coco_objects = {}  # {coco_file_path: COCO object}
-        all_img_infos = []
+        self._pr_objects = {}  # {coco_file_path: PinRegions object}
+        all_img_infos_with_source = []  # List of (img_info, coco_file_path)
         
         for coco_file in coco_file_candidates:
             if coco_file.exists():
+                coco_file_str = str(coco_file)
                 logger.info(f"Loading COCO file: {coco_file}")
-                coco = _load_coco_silent(str(coco_file))
-                self._coco_objects[str(coco_file)] = coco
+                coco = _load_coco_silent(coco_file_str)
+                self._coco_objects[coco_file_str] = coco
+                
+                # Create PinRegions object for this COCO file
+                pr = PinRegions(
+                    img_root=self.img_root,
+                    coco_file=coco_file_str,
+                    csv_file=self.csv_file,
+                    intrinsics_file=self.intrinsics_file,
+                )
+                self._pr_objects[coco_file_str] = pr
                 
                 img_ids = coco.getImgIds()
                 img_infos = coco.loadImgs(img_ids)
-                all_img_infos.extend(img_infos)
+                # Track source COCO file for each image info
+                for info in img_infos:
+                    all_img_infos_with_source.append((info, coco_file_str))
         
         if not self._coco_objects:
             raise FileNotFoundError(
                 f"No pin_regions JSON found. Tried: {coco_file_candidates}"
             )
         
-        # Load CSV and intrinsics (use first available PinRegions for these)
-        first_coco_file = list(self._coco_objects.keys())[0]
-        self.pr = PinRegions(
-            img_root=self.img_root,
-            coco_file=first_coco_file,
-            csv_file=self.csv_file,
-            intrinsics_file=self.intrinsics_file,
-        )
+        # Keep first PinRegions for backward compatibility
+        first_coco_file = list(self._pr_objects.keys())[0]
+        self.pr = self._pr_objects[first_coco_file]
         
-        # Parse all image infos from all COCO files
-        self.img_names = self.parse_img_infos(all_img_infos)
+        # Parse all image infos from all COCO files (with source tracking)
+        self.img_names = self.parse_img_infos(all_img_infos_with_source)
         logger.debug(f"Loaded {len(self.img_names)} potato IDs from COCO files")
         logger.debug(f"Sample IDs: {list(self.img_names.keys())[:5]}...")
 
@@ -292,17 +363,29 @@ class RgbdPinFetcher(object):
         # {'2R1-1': 
         #    {'rgb': '2R1-1/2R1-1_rgb_358.png',
         #     'depth': '2R1-1/2R1-1_depth_358.png',
-        #     'coco_id': xxx},
+        #     'coco_id': xxx,
+        #     'coco_file': '/path/to/coco.json'},
         #  '2R1-10': 
 
     def get(self, potato_id, img_id=None, visualize=False, show=False):
         logger.info(f"RgbdPinFetcher.get() called with potato_id={potato_id}")
         
         if img_id is None:
-            pcd, pin_pcd, pcd_ero, pcd_rela_path = self.get_pcd_pin(self.pr, self.centered_img, potato_id)
+            centered_data = self.centered_img[potato_id]
         else:
-            picked_img = {potato_id: self.img_names[potato_id][int(img_id)]}
-            pcd, pin_pcd, pcd_ero, pcd_rela_path = self.get_pcd_pin(self.pr, picked_img, potato_id)
+            centered_data = self.img_names[potato_id][int(img_id)]
+        
+        # Get the correct PinRegions object for this potato's COCO file
+        coco_file = centered_data.get('coco_file')
+        if coco_file and coco_file in self._pr_objects:
+            pr = self._pr_objects[coco_file]
+            logger.debug(f"Using COCO file: {coco_file} for {potato_id}")
+        else:
+            pr = self.pr
+            logger.warning(f"No COCO file mapping for {potato_id}, using default")
+        
+        picked_img = {potato_id: centered_data}
+        pcd, pin_pcd, pcd_ero, pcd_rela_path = self.get_pcd_pin(pr, picked_img, potato_id)
 
         pcd_xyz = np.asarray(pcd.points)
         pin_pcd_xyz = np.asarray(pin_pcd.points)
@@ -338,7 +421,7 @@ class RgbdPinFetcher(object):
         return results
     
     @staticmethod
-    def parse_img_infos(img_infos):
+    def parse_img_infos(img_infos_with_source):
         """
         Parse image infos from COCO into a structured dict.
         
@@ -346,11 +429,19 @@ class RgbdPinFetcher(object):
         - 2023: folder/file format like "2R1-1/2R1-1_rgb_100.png"
         - 2025: flat format like "2025-000_rgb_355.png"
         
-        Returns dict: {potato_id: {pos: {'rgb': ..., 'depth': ..., 'coco_id': ...}}}
+        Parameters
+        ----------
+        img_infos_with_source : list
+            List of (img_info_dict, coco_file_path) tuples.
+        
+        Returns
+        -------
+        dict
+            {potato_id: {pos: {'rgb': ..., 'depth': ..., 'coco_id': ..., 'coco_file': ...}}}
         """
         img_names = {}
 
-        for img_info in img_infos:
+        for img_info, coco_file in img_infos_with_source:
             fn = img_info['file_name']
             
             # Detect format: check if there's a folder separator
@@ -377,32 +468,33 @@ class RgbdPinFetcher(object):
             img_names[img_id][pos]['rgb'] = fn
             img_names[img_id][pos]['depth'] = fn.replace('rgb', 'depth')
             img_names[img_id][pos]['coco_id'] = img_info['id']
+            img_names[img_id][pos]['coco_file'] = coco_file  # Track source COCO file
 
         return img_names
 
     @staticmethod
     def find_center_img(img_names, img_height):
-        # pick the most centered one (closest to the half img height)
-        # it has the following structure:
-        # {
-        # '2R1-1': 
-        #    {'rgb': '2R1-1/2R1-1_rgb_358.png',
-        #     'depth': '2R1-1/2R1-1_depth_358.png',
-        #     'coco_id': xxx},
-        # '2R1-10': 
-        #    {'rgb': '2R1-10/2R1-10_rgb_364.png',
-        #     'depth': '2R1-10/2R1-10_depth_364.png',
-        #     'coco_id': xxx},
+        """
+        Pick the most centered image (closest to the half img height).
+        
+        Parameters
+        ----------
+        img_names : dict
+            {potato_id: {pos: {'rgb': ..., 'depth': ..., 'coco_id': ..., 'coco_file': ...}}}
+        img_height : int
+            Image height for calculating center position.
+            
+        Returns
+        -------
+        dict
+            {potato_id: {'rgb': ..., 'depth': ..., 'coco_id': ..., 'coco_file': ...}}
+        """
         centered_img = {}
 
         for potato_id, rgbd_list in img_names.items():
-
-            rgbd_id_array = np.asarray(list(rgbd_list.keys())) 
-
-            dis = abs(rgbd_id_array - ( img_height / 2 ))
-            
+            rgbd_id_array = np.asarray(list(rgbd_list.keys()))
+            dis = abs(rgbd_id_array - (img_height / 2))
             min_id = rgbd_id_array[np.argmin(dis)]
-
             centered_img[potato_id] = rgbd_list[min_id]
 
         return centered_img
@@ -445,8 +537,29 @@ class RgbdPinFetcher(object):
         ann_ids = pr.coco.getAnnIds(imgIds=centered_img[potato_id]['coco_id'])
         annotations = pr.coco.loadAnns(ann_ids)
 
-        # the x3_depth_mm of given potato
-        gt_depth = pr.df.loc[pr.df['label'] == potato_id, 'x3_depth_mm'].values[0]
+        # Determine year-specific parameters for histogram filtering
+        # 2025 format: potato_id starts with "2025-"
+        # 2023 format: R1-1, 2R1-1, etc.
+        is_2025_data = potato_id.startswith("2025-")
+        
+        if is_2025_data:
+            # 2025 data: use hardcoded values (x3_depth_mm is empty in CSV)
+            max_depth_range = 100
+            max_depth_contribution = 0.05
+            depth_trunc = 0.5
+            logger.debug(f"Using 2025 parameters for {potato_id}")
+        else:
+            # 2023 data: use gt_depth from CSV
+            gt_depth_row = pr.df.loc[pr.df['label'] == potato_id, 'x3_depth_mm']
+            if gt_depth_row.empty or pd.isna(gt_depth_row.values[0]):
+                # Fallback to reasonable defaults
+                max_depth_range = 150
+                logger.warning(f"No gt_depth found for {potato_id}, using default 150")
+            else:
+                max_depth_range = gt_depth_row.values[0]
+            max_depth_contribution = 0.02
+            depth_trunc = 0.4
+            logger.debug(f"Using 2023 parameters for {potato_id}, max_depth_range={max_depth_range}")
 
         if len(annotations) != 1:
             raise ValueError('has multiple annotations for one potato')
@@ -461,12 +574,22 @@ class RgbdPinFetcher(object):
             bin_mask_eros = erosion(bin_mask, footprint)
 
             pcd_pin = pr.process_pcd(
-                img, dimg, bin_mask, bin_pin, paint_color=True,
-                name=ann_ids, gt_depth=gt_depth)
+                img, dimg, bin_mask, bin_pin,
+                name=ann_ids,
+                max_depth_range=max_depth_range,
+                max_depth_contribution=max_depth_contribution,
+                depth_trunc=depth_trunc,
+                paint_color=True,
+            )
             
             pcd_ero = pr.process_pcd(
-                img, dimg, bin_mask, bin_mask_eros, paint_color=False, 
-                name=ann_ids, gt_depth=gt_depth)
+                img, dimg, bin_mask, bin_mask_eros,
+                name=ann_ids,
+                max_depth_range=max_depth_range,
+                max_depth_contribution=max_depth_contribution,
+                depth_trunc=depth_trunc,
+                paint_color=False,
+            )
             
         # read the source image
         rgb_rel_path = centered_img[potato_id]['rgb']

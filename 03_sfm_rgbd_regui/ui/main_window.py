@@ -337,7 +337,7 @@ class MainWindow(QMainWindow):
             # --- 1. SfM Pin Tab Data ---
             # Pass the data loaded by SfMPinFetcher directly to the viewer
             # It already contains 'pcd', 'pcd_offset_colormap', 'pin_pcd_strengthen'
-            self._viewer.set_sfm_pin_data(self._current_sfm['pin_idx'])
+            self._viewer.set_sfm_pin_data(self._current_sfm)
 
             # --- 2. Pin Detection Tab Data ---
             # Calculate pin center geometry (disk, arrow) for SfM
