@@ -35,6 +35,7 @@ from core import (
     DataConfig,
     DataLoader,
     save_result_json,
+    load_result_json,
 )
 from widgets import FileTreeWidget, ParameterPanel, RmseChartWidget, Viewer3D
 from ui.preferences_dialog import PreferencesDialog
@@ -383,6 +384,33 @@ class MainWindow(QMainWindow):
             }
             
             self._viewer.set_pin_detection_data(pin_detect_data)
+
+            # Check for existing result and load parameters
+            output_path = self._loader.get_output_path(pid)
+            if output_path.exists():
+                try:
+                    result_json = load_result_json(output_path)
+                    meta = result_json.get("meta", {})
+                    
+                    pin_nbr = meta.get("pin_neighbor", {})
+                    icp_cfg = meta.get("class_based_icp", {})
+                    
+                    # Create parameters from JSON (respecting typo in key)
+                    saved_params = AlignmentParams(
+                        search_radius=pin_nbr.get("search_radius(m)", 0.03),
+                        cross_buffer=pin_nbr.get("corss_buffer(m)", 0.001),
+                        icp_threshold=icp_cfg.get("iter_distance(m)", 0.001),
+                        icp_iter_num=icp_cfg.get("iter_num", 0),
+                        geometry_weight=icp_cfg.get("geometry_weight", 0.1),
+                    )
+                    
+                    # Update UI and Aligner
+                    self._param_panel.set_params(saved_params)
+                    self._aligner.update_params(saved_params)
+                    logger.info(f"Restored parameters from {output_path.name}")
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to restore parameters from existing result: {e}")
 
             # Run alignment
             self._run_alignment()
