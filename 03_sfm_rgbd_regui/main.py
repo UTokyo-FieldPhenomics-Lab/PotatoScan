@@ -14,6 +14,7 @@ Or directly:
 import os
 import sys
 from pathlib import Path
+from loguru import logger
 
 # Force X11 backend for Qt/VTK compatibility on Wayland
 # Must be set BEFORE importing PySide6
@@ -22,6 +23,10 @@ os.environ["XDG_SESSION_TYPE"] = "x11"
 
 # Ensure package imports work
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Configure logger
+logger.remove()
+logger.add(sys.stderr, level="INFO")
 
 from PySide6.QtWidgets import QApplication
 

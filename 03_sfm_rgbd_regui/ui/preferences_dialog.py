@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Preferences dialog with shortcut editing.
+Preferences dialog with shortcut editing and developer options.
 
-Allows users to configure keyboard shortcuts for common actions.
+Allows users to configure keyboard shortcuts and enable debug logging.
 """
 
 from typing import Optional
@@ -10,11 +10,13 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
     QKeySequenceEdit,
+    QLabel,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -23,7 +25,7 @@ from PySide6.QtWidgets import (
 
 class PreferencesDialog(QDialog):
     """
-    Preferences dialog for shortcut configuration.
+    Preferences dialog for shortcut configuration and developer options.
 
     Parameters
     ----------
@@ -40,6 +42,7 @@ class PreferencesDialog(QDialog):
     >>> dialog = PreferencesDialog(parent)
     >>> if dialog.exec() == QDialog.Accepted:
     ...     shortcuts = dialog.get_shortcuts()
+    ...     dev_mode = dialog.get_developer_mode()
     """
 
     shortcuts_changed = Signal(dict)
@@ -67,12 +70,16 @@ class PreferencesDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # Tab widget
-        tabs = QTabWidget()
-        layout.addWidget(tabs)
+        self._tabs = QTabWidget()
+        layout.addWidget(self._tabs)
 
         # Shortcuts tab
         shortcuts_tab = self._create_shortcuts_tab()
-        tabs.addTab(shortcuts_tab, "Shortcuts")
+        self._tabs.addTab(shortcuts_tab, "Shortcuts")
+
+        # Developer tab
+        developer_tab = self._create_developer_tab()
+        self._tabs.addTab(developer_tab, "Developer")
 
         # Dialog buttons
         buttons = QDialogButtonBox(
@@ -113,6 +120,37 @@ class PreferencesDialog(QDialog):
 
         return widget
 
+    def _create_developer_tab(self) -> QWidget:
+        """Create the developer options tab."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # Developer Mode group
+        dev_group = QGroupBox("Developer Mode")
+        dev_layout = QVBoxLayout(dev_group)
+
+        # Debug logging checkbox
+        self._chk_debug_log = QCheckBox("Enable Debug Logging")
+        self._chk_debug_log.setToolTip(
+            "When enabled, detailed debug messages will be shown in the console.\n"
+            "This includes COCO loading details, pin segmentation steps, etc."
+        )
+        dev_layout.addWidget(self._chk_debug_log)
+
+        # Description label
+        desc_label = QLabel(
+            "<i>Debug logging outputs detailed information to the console, "
+            "useful for troubleshooting data loading and alignment issues.</i>"
+        )
+        desc_label.setWordWrap(True)
+        desc_label.setStyleSheet("color: gray; margin-top: 8px;")
+        dev_layout.addWidget(desc_label)
+
+        layout.addWidget(dev_group)
+        layout.addStretch()
+
+        return widget
+
     def _add_shortcut_row(
         self,
         layout: QFormLayout,
@@ -127,10 +165,14 @@ class PreferencesDialog(QDialog):
         layout.addRow(label, edit)
 
     def _restore_defaults(self) -> None:
-        """Restore all shortcuts to defaults."""
+        """Restore all settings to defaults."""
+        # Restore shortcuts
         for action_id, edit in self._shortcut_edits.items():
             default = self.DEFAULT_SHORTCUTS.get(action_id, "")
             edit.setKeySequence(QKeySequence(default))
+
+        # Restore developer settings
+        self._chk_debug_log.setChecked(False)
 
     def get_shortcuts(self) -> dict[str, str]:
         """
@@ -160,3 +202,26 @@ class PreferencesDialog(QDialog):
                 self._shortcut_edits[action_id].setKeySequence(
                     QKeySequence(shortcut)
                 )
+
+    def get_developer_mode(self) -> bool:
+        """
+        Get the developer mode (debug logging) setting.
+
+        Returns
+        -------
+        bool
+            True if debug logging is enabled.
+        """
+        return self._chk_debug_log.isChecked()
+
+    def set_developer_mode(self, enabled: bool) -> None:
+        """
+        Set the developer mode (debug logging) setting.
+
+        Parameters
+        ----------
+        enabled : bool
+            True to enable debug logging.
+        """
+        self._chk_debug_log.setChecked(enabled)
+

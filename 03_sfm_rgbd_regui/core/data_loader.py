@@ -196,6 +196,7 @@ class DataLoader:
         self,
         pid: str,
         visualize: bool = False,
+        status_callback=None,
     ) -> dict:
         """
         Load SfM point cloud data for a potato ID.
@@ -206,6 +207,9 @@ class DataLoader:
             Potato ID to load.
         visualize : bool, default False
             Whether to prepare visualization geometries.
+        status_callback : callable, optional
+            Callback function with signature `(message: str) -> None`.
+            Used to send progress updates during pin segmentation.
 
         Returns
         -------
@@ -224,6 +228,7 @@ class DataLoader:
             pid,
             visualize=visualize,
             show=False,
+            status_callback=status_callback,
         )
 
     def get_output_path(self, pid: str) -> Path:

@@ -2,6 +2,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 import matplotlib.pyplot as plt
+from loguru import logger
 
 import copy
 import open3d as o3d
@@ -28,7 +29,7 @@ def find_pin_nbr(pcd_data_dict, pin_data_dict, radius, visualize=False, label="s
 
     nbr_pcd = pcd_data_dict['pcd'].select_by_index(nbr_no_pin_idx)
 
-    print(f":: Find {label} point cloud neighbor")
+    logger.info(f"Find {label} point cloud neighbor")
 
     # calculate the vector according to the new region.
     vector_normalized, bbox_center = util_pc.find_minimum_vector_of_bbox(nbr_pcd)

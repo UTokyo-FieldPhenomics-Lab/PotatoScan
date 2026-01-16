@@ -20,6 +20,7 @@ import utils.linear_algebra as util_la
 import utils.cross_align as util_ca
 import utils.pin_center as util_pc
 import utils.icp_align as util_ia
+from loguru import logger
 
 
 @dataclass
@@ -150,6 +151,7 @@ class Aligner:
             (sfm_pin_data, rgbd_pin_data) with center and normal info.
         """
         self._notify("pin_detection", {"status": "starting"})
+        logger.debug("Finding pin centers via RANSAC/ConvexHull...")
 
         sfm_pin_data = util_pc.find_pin_center(
             sfm_data["pin_pcd"],
@@ -167,6 +169,8 @@ class Aligner:
             show=False,
             label="rgbd",
         )
+        
+        logger.debug(f"Pin Detection Complete for SfM and RGBD")
 
         self._notify("pin_detection", {"status": "complete"})
         return sfm_pin_data, rgbd_pin_data
@@ -192,6 +196,7 @@ class Aligner:
             4x4 initial transformation matrix.
         """
         self._notify("rough_alignment", {"status": "computing"})
+        logger.debug("Computing rough alignment matrix from pin vectors")
 
         imatrix = util_la.create_rotational_transform_matrix(
             rgbd_pin_data["circle_center_3d"],
@@ -230,6 +235,7 @@ class Aligner:
             Dictionary with angles, rmses, matrices, peaks.
         """
         self._notify("nuv_rotation", {"status": "starting"})
+        logger.info("Starting NUV rotation optimization")
 
         # Transform RGBD data by initial matrix
         rgbd_pcd_it = copy.deepcopy(rgbd_data["pcd"]).transform(initial_matrix)
@@ -238,6 +244,8 @@ class Aligner:
             "pin_idx": rgbd_data["pin_idx"],
             "pin_pcd": rgbd_pcd_it.select_by_index(rgbd_data["pin_idx"]),
         }
+        
+        logger.debug(f"RGBD transformed. Points: {len(rgbd_pcd_it.points)}, Pin points: {len(rgbd_data_it['pin_pcd'].points)}")
 
         rgbd_pin_data_it = util_pc.find_pin_center(
             rgbd_data_it["pin_pcd"],
@@ -248,6 +256,7 @@ class Aligner:
         )
 
         # Find pin neighbors
+        logger.debug(f"Finding pin neighbors with radius {self.params.search_radius}m")
         sfm_nbr_data = util_ia.find_pin_nbr(
             sfm_data,
             sfm_pin_data,
@@ -260,8 +269,16 @@ class Aligner:
             rgbd_pin_data_it,
             radius=self.params.search_radius,
         )
+        
+        nbr_sfm_pts = len(sfm_nbr_data['nbr_pcd'].points)
+        nbr_rgbd_pts = len(rgbd_nbr_data_it['nbr_pcd'].points)
+        logger.debug(f"Neighbor points found - SfM: {nbr_sfm_pts}, RGBD: {nbr_rgbd_pts}")
+
+        if nbr_sfm_pts == 0 or nbr_rgbd_pts == 0:
+            logger.error("No neighbor points found! NUV rotation will fail.")
 
         # Iterative NUV rotation
+        logger.debug("Running iterative NUV rotate...")
         angles, rmses, matrices = util_ca.iterative_nuv_rotate(
             source_pcd=rgbd_nbr_data_it["nbr_pcd"],
             target_pcd=sfm_nbr_data["nbr_pcd"],
@@ -269,12 +286,15 @@ class Aligner:
             normal_vector=sfm_pin_data["vector"],
             buffer=self.params.cross_buffer,
         )
+        logger.debug(f"NUV rotate complete. Computed {len(angles)} angles.")
 
         # Find local minima (peaks in negative)
         rmses_dup = np.append(rmses, rmses[0:3])
         peaks, _ = find_peaks(-rmses_dup, distance=1)
         peaks = peaks % len(rmses)
         peaks = np.unique(peaks)
+        
+        logger.info(f"Found {len(peaks)} peaks in RMSE curve")
 
         # Sort peaks by RMSE values
         if len(peaks) > 1:
@@ -317,10 +337,13 @@ class Aligner:
             (refined_matrix, open3d_rmse).
         """
         self._notify("icp", {"status": "starting", "iter": self.params.icp_iter_num})
+        logger.info(f"Starting ICP refinement with {self.params.icp_iter_num} iterations")
 
         # Create binary point clouds for ICP
         sfm_pcd_bin = util_ia.paint_pcd_binary(sfm_data["pcd"], sfm_data["pin_idx"])
         rgbd_pcd_bin = util_ia.paint_pcd_binary(rgbd_data["pcd"], rgbd_data["pin_idx"])
+        
+        logger.debug(f"ICP Binary Clouds - SfM: {len(sfm_pcd_bin.points)}, RGBD: {len(rgbd_pcd_bin.points)}")
 
         tmatrix, o3d_rmse = util_ia.color_based_icp(
             rgbd_pcd_bin,

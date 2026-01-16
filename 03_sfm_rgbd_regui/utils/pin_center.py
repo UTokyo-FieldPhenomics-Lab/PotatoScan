@@ -2,6 +2,7 @@ import numpy as np
 import open3d as o3d
 import matplotlib.pyplot as plt
 
+from loguru import logger
 from scipy.spatial import ConvexHull
 
 from .circle_fit import hyperLSQ
@@ -30,7 +31,10 @@ def correct_vector_direction(points, vector, vector_root, colors=None):
     dist2min = abs(start - potato_min)
     dist2max = abs(start - potato_max)
 
-    print(f"   V_st = {start} | V_ed = {end} | PCD_min = {potato_min} | PCD_max = {potato_max}")
+    logger.debug(
+        f"V_st={start:.4f} | V_ed={end:.4f} | "
+        f"PCD_min={potato_min:.4f} | PCD_max={potato_max:.4f}"
+    )
     # =====debug=====
     # # plot in 3d
     # root_on_top_projected_3d= util_la.project_points_on_vector(
@@ -242,13 +246,13 @@ def find_pin_center(pin_pcd, pcd, circle_color=[1,0,0], visualize=False, show=Fa
     circle_center_3d = util_la.convert_2d_to_3d(np.asarray([circle_center_2d]), plane_point, uv[0], uv[1])
     circle_center_3d = circle_center_3d[0]
 
-    print(f":: Correct {label} pin vector direction")
+    logger.info(f"Correct {label} pin vector direction")
 
     # 矫正轴的方向
     pin_vector = correct_vector_direction(
         np.asarray(pcd.points), vector_normalized, circle_center_3d, np.asarray(pcd.colors)
     )
-    print(f"   pin vector from {vector_normalized} to {pin_vector}")
+    logger.debug(f"Pin vector from {vector_normalized} to {pin_vector}")
 
     results = {
         "circle_center_3d": circle_center_3d,

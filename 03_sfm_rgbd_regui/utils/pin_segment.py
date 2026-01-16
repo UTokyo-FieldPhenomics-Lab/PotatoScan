@@ -1,4 +1,7 @@
 import pathlib
+import sys
+import contextlib
+import io
 
 # RGBD fether
 import os
@@ -24,12 +27,49 @@ import warnings
 
 from loguru import logger
 
+
+def _load_coco_silent(coco_file: str) -> COCO:
+    """
+    Load COCO annotations without printing to stdout.
+
+    The pycocotools library prints progress messages directly to stdout.
+    This function captures and redirects those messages to loguru.
+
+    Parameters
+    ----------
+    coco_file : str
+        Path to the COCO JSON annotation file.
+
+    Returns
+    -------
+    COCO
+        The loaded COCO object.
+
+    Examples
+    --------
+    >>> coco = _load_coco_silent("/path/to/annotations.json")
+    """
+    # Capture stdout during COCO initialization
+    captured_output = io.StringIO()
+    with contextlib.redirect_stdout(captured_output):
+        coco = COCO(coco_file)
+
+    # Log the captured output at debug level
+    output = captured_output.getvalue().strip()
+    if output:
+        for line in output.split('\n'):
+            if line.strip():
+                logger.debug(f"COCO: {line.strip()}")
+
+    return coco
+
+
 class PinRegions:
     """The base object for RgbdPinFetcher
     """
     def __init__(self, img_root, coco_file, csv_file, intrinsics_file):
         self.img_root = img_root
-        self.coco = COCO(coco_file)
+        self.coco = _load_coco_silent(coco_file)
         self.df = pd.read_csv(csv_file)
         self.intrinsics = self.load_intrinsics(intrinsics_file)
 
@@ -222,7 +262,7 @@ class RgbdPinFetcher(object):
         for coco_file in coco_file_candidates:
             if coco_file.exists():
                 logger.info(f"Loading COCO file: {coco_file}")
-                coco = COCO(coco_file)
+                coco = _load_coco_silent(str(coco_file))
                 self._coco_objects[str(coco_file)] = coco
                 
                 img_ids = coco.getImgIds()
@@ -462,6 +502,11 @@ class SfMPinFetcher():
         dataset_root / 2_sfm / 3_pin_refs / {year} / {color}.png
     
     Where year and color are determined from the ground_truth CSV file.
+    
+    Notes
+    -----
+    The `status_callback` parameter in `get()` allows passing progress 
+    messages to the GUI statusbar during the iterative pin segmentation.
     """
 
     def __init__(self, dataset_root, csv_file) -> None:
@@ -577,11 +622,16 @@ class SfMPinFetcher():
         logger.debug(f"Loaded ref color for {cache_key}: {hsv}")
         return hsv
 
-    def get(self, potato_id, 
-            thresh=None,  # for color diff
-            nb_points=40, radius=0.005,  # for denoise
-            visualize=False, show=False
-        ):
+    def get(
+        self,
+        potato_id: str,
+        thresh: float = None,
+        nb_points: int = 40,
+        radius: float = 0.005,
+        visualize: bool = False,
+        show: bool = False,
+        status_callback=None,
+    ):
         """
         Get SfM point cloud with pin segmentation.
         
@@ -600,6 +650,9 @@ class SfMPinFetcher():
             Return data for visualization.
         show : bool
             Whether show the intermediate results for debugging.
+        status_callback : callable, optional
+            A callback function with signature `(message: str) -> None`.
+            Used to send progress updates to the GUI statusbar.
 
         Returns
         -------
@@ -624,7 +677,8 @@ class SfMPinFetcher():
             logger.debug(f"Running hsv_ref_pin for {potato_id}")
             rc = self.hsv_ref_pin(
                 self.sfm_pcd_folder, potato_id, ref_color_hsv, 
-                thresh, nb_points, radius, visualize, show
+                thresh, nb_points, radius, visualize, show,
+                status_callback=status_callback,
             )
             
             rc['pin_pcd'] = rc['pcd'].select_by_index(rc['pin_idx'])
@@ -671,12 +725,47 @@ class SfMPinFetcher():
 
         return hull_volume, pin_idx
 
-    def hsv_ref_pin(self,
-        sfm_pcd_folder, potato_id, 
-        ref_color_hsv, thresh=None,  # for color diff
-        nb_points=40, radius=0.005,  # for denoise
-        visualize=False, show=False
+    def hsv_ref_pin(
+        self,
+        sfm_pcd_folder,
+        potato_id: str,
+        ref_color_hsv,
+        thresh: float = None,
+        nb_points: int = 40,
+        radius: float = 0.005,
+        visualize: bool = False,
+        show: bool = False,
+        status_callback=None,
     ):
+        """
+        Perform HSV-based pin segmentation on SfM point cloud.
+        
+        Parameters
+        ----------
+        sfm_pcd_folder : Path
+            Path to SfM point cloud folder.
+        potato_id : str
+            Potato ID.
+        ref_color_hsv : np.ndarray
+            Reference pin color in HSV format.
+        thresh : float, optional
+            Color distance threshold. If None, will be auto-determined.
+        nb_points : int, optional
+            Points for radius outlier removal.
+        radius : float, optional
+            Radius for outlier removal.
+        visualize : bool, optional
+            Prepare visualization geometries.
+        show : bool, optional
+            Show intermediate results.
+        status_callback : callable, optional
+            Callback for status updates with signature `(message: str) -> None`.
+        
+        Returns
+        -------
+        dict
+            Result container with pin indices and point cloud data.
+        """
         # get the sfm pcd
         sfm_pcd_path = sfm_pcd_folder / potato_id / f"{potato_id}_30000.ply"
         logger.debug(f"Reading SfM point cloud: {sfm_pcd_path}")
@@ -685,7 +774,6 @@ class SfMPinFetcher():
         sfm_pcd = o3d.io.read_point_cloud(str(sfm_pcd_path))
 
         colors = np.asarray(sfm_pcd.colors)
-
         colors_hsv = skimage.color.rgb2hsv(colors)
 
         # Calculate color distance using the single ref_color_hsv
@@ -700,48 +788,78 @@ class SfMPinFetcher():
         color_distance_weight = color_distance_diff * np.array(HSV_WEIGHT)
         color_distance = color_distance_weight.sum(axis=1)
 
-        # 定义一个Normalize对象，用于将数据值归一化到[0, 1]的范围
-        norm = mcolors.Normalize(vmin=np.min(color_distance), vmax=np.max(color_distance))
-
+        # Normalize color distance to [0, 1] range
+        norm = mcolors.Normalize(
+            vmin=np.min(color_distance), vmax=np.max(color_distance)
+        )
         color_distance_norm = norm(color_distance)
 
-        print(":: iterative pin segmentation of SfM point clouds")
+        # Helper to send status updates
+        def _update_status(msg: str) -> None:
+            logger.info(msg)
+            if status_callback is not None:
+                status_callback(msg)
+
+        _update_status("Iterative pin segmentation of SfM point clouds...")
 
         # manually set the threshold
         if thresh is not None:
-            hull_volume, pin_idx = self.iter_hull_volume_by_thresh(sfm_pcd, color_distance_norm, thresh)
+            hull_volume, pin_idx = self.iter_hull_volume_by_thresh(
+                sfm_pcd, color_distance_norm, thresh
+            )
         
         # looping the thresh to denoise
         else:
             thresh = 0.35
-            hull_volume, pin_idx = self.iter_hull_volume_by_thresh(sfm_pcd, color_distance_norm, thresh)
+            hull_volume, pin_idx = self.iter_hull_volume_by_thresh(
+                sfm_pcd, color_distance_norm, thresh
+            )
 
             while hull_volume > 100:
                 pin_pcd = sfm_pcd.select_by_index(pin_idx)
                 pin_pcd_num = len(pin_pcd.points)
+
                 if pin_pcd_num > 10000:
-                    print(f"Thresh={thresh} get pin covex hull volumn {hull_volume} > 80 with [{pin_pcd_num}] points, obvious not a pin size")
+                    msg = (
+                        f"Thresh={thresh:.2f}: hull={hull_volume:.1f}mm³ "
+                        f"({pin_pcd_num} pts) - too large, reducing threshold"
+                    )
+                    _update_status(msg)
                     keeped, keeped_idx = pin_pcd, pin_idx
                 else:
-                    print(f"Thresh={thresh} get pin convex hull volumn {hull_volume} > 80 with [{pin_pcd_num}] points, denoise first")
-                    keeped, keeped_idx = pin_pcd.remove_radius_outlier(nb_points=min(40, int(pin_pcd_num/20)), radius=0.005)
+                    msg = (
+                        f"Thresh={thresh:.2f}: hull={hull_volume:.1f}mm³ "
+                        f"({pin_pcd_num} pts) - denoising..."
+                    )
+                    _update_status(msg)
+                    keeped, keeped_idx = pin_pcd.remove_radius_outlier(
+                        nb_points=min(40, int(pin_pcd_num / 20)), radius=0.005
+                    )
 
                 denoised_volume = self.get_hull_volume(keeped)
 
-                if denoised_volume > 100:  # still > 50 after denoising
+                if denoised_volume > 100:
                     thresh -= 0.05
-
-                    if thresh <0:
-                        raise ValueError(" x   Threshold can not below 0")
-
-                    hull_volume, pin_idx = self.iter_hull_volume_by_thresh(sfm_pcd, color_distance_norm, thresh)
+                    if thresh < 0:
+                        raise ValueError("Threshold cannot be below 0")
+                    hull_volume, pin_idx = self.iter_hull_volume_by_thresh(
+                        sfm_pcd, color_distance_norm, thresh
+                    )
                 else:
                     hull_volume = denoised_volume
                     pin_idx = pin_idx[keeped_idx]
-                    print(f"   Stop at thresh={thresh} with hull volume = {hull_volume} after denoising")
+                    msg = (
+                        f"Pin segmentation complete: thresh={thresh:.2f}, "
+                        f"hull={hull_volume:.2f}mm³ (denoised)"
+                    )
+                    _update_status(msg)
                     break
             else:
-                print(f"   Stop at thresh={thresh} with hull volume = {hull_volume}")
+                msg = (
+                    f"Pin segmentation complete: thresh={thresh:.2f}, "
+                    f"hull={hull_volume:.2f}mm³"
+                )
+                _update_status(msg)
 
         results_container = {
             "pin_idx": pin_idx,

@@ -39,6 +39,7 @@ from core import (
 from widgets import FileTreeWidget, ParameterPanel, RmseChartWidget, Viewer3D
 from ui.preferences_dialog import PreferencesDialog
 from utils import pin_center as util_pc
+from loguru import logger
 
 
 class MainWindow(QMainWindow):
@@ -251,6 +252,10 @@ class MainWindow(QMainWindow):
         if geometry:
             self.restoreGeometry(geometry)
 
+        # Developer mode (log level)
+        dev_mode = self._settings.value("developer_mode", False, type=bool)
+        self._apply_log_level(dev_mode)
+
         # Last used folders
         dataset = self._settings.value("last_dataset")
 
@@ -317,7 +322,11 @@ class MainWindow(QMainWindow):
         try:
             # Load data
             self._current_rgbd = self._loader.load_rgbd(pid, visualize=True)
-            self._current_sfm = self._loader.load_sfm(pid, visualize=True)
+            self._current_sfm = self._loader.load_sfm(
+                pid,
+                visualize=True,
+                status_callback=self._update_statusbar,
+            )
 
             # Set point clouds in viewer
             self._viewer.set_sfm_cloud(self._current_sfm["pcd"])
@@ -376,17 +385,24 @@ class MainWindow(QMainWindow):
     def _run_alignment(self) -> None:
         """Run the alignment pipeline."""
         if self._aligner is None or self._current_rgbd is None:
+            logger.warning("Aligner or RGBD data missing")
             return
 
         self._status_bar.showMessage(f"Aligning {self._current_pid}...")
+        logger.info(f"Starting alignment for {self._current_pid}")
         QApplication.processEvents()
 
         try:
-            self._aligner.update_params(self._param_panel.get_params())
+            params = self._param_panel.get_params()
+            logger.debug(f"Alignment params: {params}")
+            self._aligner.update_params(params)
+            
+            logger.info("Computing full alignment...")
             self._current_result = self._aligner.compute_full_alignment(
                 self._current_rgbd,
                 self._current_sfm,
             )
+            logger.success(f"Alignment complete. RMSE: {self._current_result.rmse}")
 
             # Update views
             self._viewer.set_transform(self._current_result.transform_matrix)
@@ -399,6 +415,9 @@ class MainWindow(QMainWindow):
                 idx = int(pa / 10) - 1
                 if 0 <= idx < len(angles):
                     peak_indices.append(idx)
+                    
+            logger.debug(f"Updating chart with {len(angles)} points and {len(peak_indices)} peaks")
+            
             self._rmse_chart.set_data(
                 angles,
                 rmses,
@@ -411,12 +430,28 @@ class MainWindow(QMainWindow):
             )
 
         except Exception as e:
+            logger.exception(f"Alignment failed for {self._current_pid}")
             QMessageBox.warning(self, "Alignment Error", str(e))
             self._status_bar.showMessage("Alignment failed")
 
     def _on_alignment_update(self, stage: str, data: dict) -> None:
         """Handle alignment progress updates."""
         self._status_bar.showMessage(f"{stage}: {data.get('status', '')}")
+        QApplication.processEvents()
+
+    def _update_statusbar(self, message: str) -> None:
+        """
+        Update the statusbar with a message and process events.
+        
+        This method can be used as a callback for long-running operations
+        to provide real-time feedback in the GUI.
+        
+        Parameters
+        ----------
+        message : str
+            The message to display in the statusbar.
+        """
+        self._status_bar.showMessage(message)
         QApplication.processEvents()
 
     @Slot(object)
@@ -518,15 +553,37 @@ class MainWindow(QMainWindow):
                 PreferencesDialog.DEFAULT_SHORTCUTS,
             )
         )
+        dialog.set_developer_mode(
+            self._settings.value("developer_mode", False, type=bool)
+        )
 
         if dialog.exec():
+            # Save and apply shortcuts
             shortcuts = dialog.get_shortcuts()
             self._settings.setValue("shortcuts", shortcuts)
-
-            # Update shortcuts
             for action_id, key in shortcuts.items():
                 if action_id in self._shortcuts:
                     self._shortcuts[action_id].setKey(QKeySequence(key))
+
+            # Save and apply developer mode
+            dev_mode = dialog.get_developer_mode()
+            self._settings.setValue("developer_mode", dev_mode)
+            self._apply_log_level(dev_mode)
+
+    def _apply_log_level(self, debug_enabled: bool) -> None:
+        """
+        Apply the log level based on developer mode setting.
+
+        Parameters
+        ----------
+        debug_enabled : bool
+            True to enable DEBUG level, False for INFO level.
+        """
+        import sys
+        logger.remove()
+        level = "DEBUG" if debug_enabled else "INFO"
+        logger.add(sys.stderr, level=level)
+        logger.info(f"Log level set to {level}")
 
     @Slot()
     def _on_about(self) -> None:
