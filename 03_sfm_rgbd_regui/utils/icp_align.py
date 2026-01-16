@@ -27,6 +27,22 @@ def find_pin_nbr(pcd_data_dict, pin_data_dict, radius, visualize=False, label="s
 
     nbr_no_pin_idx = np.setdiff1d(nbr_idx, nbr_pin_idx)
 
+    logger.debug(
+        f"{label}: search_radius={radius:.4f}, circle_radius={pin_data_dict['circle_radius']:.4f}, "
+        f"nbr_idx={len(nbr_idx)}, nbr_pin_idx={len(nbr_pin_idx)}, nbr_no_pin_idx={len(nbr_no_pin_idx)}"
+    )
+    
+    if len(nbr_no_pin_idx) == 0:
+        logger.warning(
+            f"{label}: No neighbor points found! "
+            f"circle_radius ({pin_data_dict['circle_radius']:.4f}) >= search_radius ({radius:.4f})? "
+            f"Consider increasing search_radius parameter."
+        )
+        # Fallback: use all neighbors minus exact pin points
+        if len(nbr_idx) > 0:
+            logger.warning(f"{label}: Using fallback - all {len(nbr_idx)} neighbors without pin exclusion")
+            nbr_no_pin_idx = np.array(nbr_idx)
+
     nbr_pcd = pcd_data_dict['pcd'].select_by_index(nbr_no_pin_idx)
 
     logger.info(f"Find {label} point cloud neighbor")

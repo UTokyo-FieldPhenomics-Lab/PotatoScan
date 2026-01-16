@@ -122,7 +122,10 @@ class Viewer3D(QWidget):
             PyVista mesh.
         """
         if isinstance(geometry, o3d.geometry.PointCloud):
-            points = np.asarray(geometry.points)
+            # IMPORTANT: Use .copy() to avoid modifying original Open3D data!
+            # np.asarray() creates a VIEW of the underlying data, so modifications
+            # to PyVista mesh.points will also modify the Open3D point cloud.
+            points = np.asarray(geometry.points).copy()
             cloud = pv.PolyData(points)
             if geometry.has_colors():
                 colors = (np.asarray(geometry.colors) * 255).astype(np.uint8)
@@ -130,7 +133,8 @@ class Viewer3D(QWidget):
             return cloud
 
         elif isinstance(geometry, o3d.geometry.TriangleMesh):
-            vertices = np.asarray(geometry.vertices)
+            # Also copy vertices to prevent accidental modifications
+            vertices = np.asarray(geometry.vertices).copy()
             faces = np.asarray(geometry.triangles)
             # PyVista expects faces as [n_points, p1, p2, p3, ...]
             # We assume triangles mainly, but let's be safe

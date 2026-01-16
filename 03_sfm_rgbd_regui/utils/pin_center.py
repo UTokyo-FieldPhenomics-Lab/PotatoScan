@@ -233,6 +233,22 @@ def find_minimum_vector_of_bbox(pcd):
 
 
 def find_pin_center(pin_pcd, pcd, circle_color=[1,0,0], visualize=False, show=False, label="sfm"):
+    # Debug: log coordinate ranges
+    pin_pts = np.asarray(pin_pcd.points)
+    pcd_pts = np.asarray(pcd.points)
+    logger.debug(
+        f"{label} find_pin_center: "
+        f"pin_pcd range X=[{pin_pts[:,0].min():.4f}, {pin_pts[:,0].max():.4f}], "
+        f"Y=[{pin_pts[:,1].min():.4f}, {pin_pts[:,1].max():.4f}], "
+        f"Z=[{pin_pts[:,2].min():.4f}, {pin_pts[:,2].max():.4f}]"
+    )
+    logger.debug(
+        f"{label} find_pin_center: "
+        f"pcd range X=[{pcd_pts[:,0].min():.4f}, {pcd_pts[:,0].max():.4f}], "
+        f"Y=[{pcd_pts[:,1].min():.4f}, {pcd_pts[:,1].max():.4f}], "
+        f"Z=[{pcd_pts[:,2].min():.4f}, {pcd_pts[:,2].max():.4f}]"
+    )
+    
     vector_normalized, plane_point = find_minimum_vector_of_bbox(pin_pcd)
 
     # 投影到最短边对应的平面上
