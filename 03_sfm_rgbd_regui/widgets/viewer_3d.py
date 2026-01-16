@@ -26,6 +26,8 @@ import io
 import matplotlib
 import matplotlib.pyplot as plt
 
+from loguru import logger
+
 
 class Viewer3D(QWidget):
     """
@@ -217,7 +219,7 @@ class Viewer3D(QWidget):
             Dictionary containing SfM and RGBD pin detection results (disks, arrows, etc.).
         """
         self._pin_detection_data = data
-        self._update_views()
+        self._update_pin_detection_view()
 
     def _update_raw_view(self) -> None:
         """Update the raw (untransformed) view using original point cloud copies."""
@@ -284,7 +286,7 @@ class Viewer3D(QWidget):
                     render_points_as_spheres=True,
                 )
 
-        if self._rgbd_pcd is not None:
+        if self._rgbd_pcd_raw is not None:
             # Apply transformation
             import copy
             transformed = copy.deepcopy(self._rgbd_pcd_raw)
@@ -365,6 +367,9 @@ class Viewer3D(QWidget):
         
         center = sfm_pcd.get_center()
 
+        logger.debug(f"Center: {center}")
+        logger.debug(f"Spacing: {spacing}")
+
         # 1. Left: Original SfM
         self._add_mesh_to_plotter(
             self._plotter_sfm_pin, 
@@ -381,6 +386,7 @@ class Viewer3D(QWidget):
                 self._plotter_sfm_pin, 
                 hsv_pcd,
                 offset=correction 
+                # offset=np.array([0, 0, 0])
             )
         
         # 3. Right: Combined (HSV background + Red Pin)
@@ -395,12 +401,9 @@ class Viewer3D(QWidget):
 
         pin_pcd_red = self._sfm_pin_data.get('pin_pcd_strengthen')
         if pin_pcd_red:
-             # Assume pin pcd (from indices) is in original sfm frame (near center)
-             # So we shift it by spacing
              self._add_mesh_to_plotter(
                 self._plotter_sfm_pin, 
                 pin_pcd_red,
-                offset=np.array([spacing, 0, 0]),
                 color="red",
                 point_size=5
              )
@@ -484,8 +487,6 @@ class Viewer3D(QWidget):
 
     def clear(self) -> None:
         """Clear all point clouds."""
-        self._sfm_pcd = None
-        self._rgbd_pcd = None
         self._sfm_pcd_raw = None
         self._rgbd_pcd_raw = None
         self._sfm_pin_data = None
