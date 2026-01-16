@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Signal, Slot
+from PySide6.QtCore import Signal, Slot, QTimer, Qt
 from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
@@ -20,12 +20,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PySide6.QtCore import Qt
 
 # Add parent for core imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.alignment import AlignmentParams
-
 
 class ParameterPanel(QWidget):
     """
@@ -39,7 +37,7 @@ class ParameterPanel(QWidget):
     Signals
     -------
     params_changed : Signal(AlignmentParams)
-        Emitted when any parameter changes.
+        Emitted when any parameter changes (debounced).
 
     Examples
     --------
@@ -54,6 +52,13 @@ class ParameterPanel(QWidget):
         """Initialize the parameter panel."""
         super().__init__(parent)
         self._updating = False
+        
+        # Debounce timer for updates
+        self._update_timer = QTimer(self)
+        self._update_timer.setSingleShot(True)
+        self._update_timer.setInterval(800)  # 800ms delay
+        self._update_timer.timeout.connect(self._emit_params_now)
+        
         self._setup_ui()
         self._connect_signals()
 
@@ -126,25 +131,43 @@ class ParameterPanel(QWidget):
 
     def _connect_signals(self) -> None:
         """Connect internal signals."""
+        # Value changes trigger timer (debounce)
         self._spin_search_radius.valueChanged.connect(self._on_param_changed)
         self._spin_cross_buffer.valueChanged.connect(self._on_param_changed)
         self._spin_icp_threshold.valueChanged.connect(self._on_param_changed)
         self._spin_icp_iter.valueChanged.connect(self._on_param_changed)
         self._slider_weight.valueChanged.connect(self._on_weight_changed)
+        
+        # Explicit triggers (Enter key or Focus lost, Slider release) - Immediate update
+        self._spin_search_radius.editingFinished.connect(self._emit_params_now)
+        self._spin_cross_buffer.editingFinished.connect(self._emit_params_now)
+        self._spin_icp_threshold.editingFinished.connect(self._emit_params_now)
+        self._spin_icp_iter.editingFinished.connect(self._emit_params_now)
+        self._slider_weight.sliderReleased.connect(self._emit_params_now)
 
     @Slot()
     def _on_param_changed(self) -> None:
-        """Handle parameter value changes."""
+        """Handle parameter value changes (debounced)."""
         if not self._updating:
-            self.params_changed.emit(self.get_params())
+            self._update_timer.start()
 
     @Slot(int)
     def _on_weight_changed(self, value: int) -> None:
-        """Handle weight slider changes."""
+        """Handle weight slider changes (debounced)."""
         weight = value / 100.0
         self._label_weight.setText(f"{weight:.2f}")
         if not self._updating:
-            self.params_changed.emit(self.get_params())
+            self._update_timer.start()
+
+    @Slot()
+    def _emit_params_now(self) -> None:
+        """Emit current parameters immediately, stopping pending timer."""
+        # Avoid redundant emits if timer was just about to fire or already fired
+        if self._update_timer.isActive():
+            self._update_timer.stop()
+        
+        # Emit signal
+        self.params_changed.emit(self.get_params())
 
     def get_params(self) -> AlignmentParams:
         """
