@@ -393,7 +393,7 @@ class MainWindow(QMainWindow):
             sfm_pin_result = util_pc.find_pin_center(
                 self._current_sfm['pin_pcd'], 
                 self._current_sfm['pcd'], 
-                circle_color=[1, 0, 0], # Red
+                circle_color=[0, 0, 0], # Black
                 visualize=True, 
                 show=False, 
                 label="sfm"
@@ -403,7 +403,7 @@ class MainWindow(QMainWindow):
             rgbd_pin_result = util_pc.find_pin_center(
                 self._current_rgbd['pin_pcd'], 
                 self._current_rgbd['pcd'], 
-                circle_color=[1, 1, 0], # Yellow
+                circle_color=[0, 0, 0], # Black
                 visualize=True, 
                 show=False, 
                 label="rgbd"

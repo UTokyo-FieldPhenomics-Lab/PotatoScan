@@ -579,7 +579,7 @@ class Viewer3D(QWidget):
         self._update_pin_detection_view()
         self._update_aligned_view()
 
-    def _add_mesh_to_plotter(self, plotter, geometry, offset=None, color=None, point_size=None):
+    def _add_mesh_to_plotter(self, plotter, geometry, offset=None, color=None, point_size=None, **kwargs):
         """Helper to add Open3D geometry to PyVista plotter."""
         if geometry is None:
             return
@@ -597,18 +597,21 @@ class Viewer3D(QWidget):
         if offset is not None:
             mesh.points += offset
             
-        kwargs = {}
+        mesh_kwargs = {}
         if "RGB" in mesh.array_names:
-            kwargs["scalars"] = "RGB"
-            kwargs["rgb"] = True
+            mesh_kwargs["scalars"] = "RGB"
+            mesh_kwargs["rgb"] = True
         elif color:
-            kwargs["color"] = color
+            mesh_kwargs["color"] = color
         
         if isinstance(geometry, o3d.geometry.PointCloud):
-            kwargs["point_size"] = point_size if point_size else self._point_size
-            kwargs["render_points_as_spheres"] = True
+            mesh_kwargs["point_size"] = point_size if point_size else self._point_size
+            mesh_kwargs["render_points_as_spheres"] = True
             
-        plotter.add_mesh(mesh, **kwargs)
+        # Update with specific kwargs (overriding default logic if needed)
+        mesh_kwargs.update(kwargs)
+            
+        plotter.add_mesh(mesh, **mesh_kwargs)
 
     def _update_sfm_pin_view(self) -> None:
         """Update the SfM Pin view."""
@@ -698,13 +701,20 @@ class Viewer3D(QWidget):
         # 2. Disk
         if 'sfm_disk' in data:
              self._add_mesh_to_plotter(
-                self._plotter_pin_detect_sfm, data['sfm_disk'], offset=sfm_offset, color="red"
+                self._plotter_pin_detect_sfm, 
+                data['sfm_disk'], 
+                offset=sfm_offset, 
+                color="black",
+                style="wireframe"
             )
             
         # 3. Arrow
         if 'sfm_arrow' in data:
              self._add_mesh_to_plotter(
-                self._plotter_pin_detect_sfm, data['sfm_arrow'], offset=sfm_offset, color="red"
+                self._plotter_pin_detect_sfm, 
+                data['sfm_arrow'], 
+                offset=sfm_offset, 
+                color="black"
             )
 
         self._plotter_pin_detect_sfm.reset_camera()
@@ -726,13 +736,20 @@ class Viewer3D(QWidget):
         # 2. Disk
         if 'rgbd_disk' in data:
              self._add_mesh_to_plotter(
-                self._plotter_pin_detect_rgbd, data['rgbd_disk'], offset=rgbd_offset, color="red"
+                self._plotter_pin_detect_rgbd, 
+                data['rgbd_disk'], 
+                offset=rgbd_offset, 
+                color="black",
+                style="wireframe"
             )
             
         # 3. Arrow
         if 'rgbd_arrow' in data:
              self._add_mesh_to_plotter(
-                self._plotter_pin_detect_rgbd, data['rgbd_arrow'], offset=rgbd_offset, color="red"
+                self._plotter_pin_detect_rgbd, 
+                data['rgbd_arrow'], 
+                offset=rgbd_offset, 
+                color="black"
             )
 
         self._plotter_pin_detect_rgbd.reset_camera()
