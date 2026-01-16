@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QLabel,
+    QSplitter,
 )
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import Qt
@@ -95,8 +96,7 @@ class Viewer3D(QWidget):
         # Create plotter widgets for each tab
         self._plotter_raw = QtInteractor(self)
         self._plotter_aligned = QtInteractor(self)
-        self._plotter_pin_detect = QtInteractor(self)
-
+        
         # SfM Pin Tab with Layout
         self._tab_sfm_pin_widget = QWidget()
         sfm_pin_layout = QVBoxLayout(self._tab_sfm_pin_widget)
@@ -113,9 +113,48 @@ class Viewer3D(QWidget):
         self._sfm_pin_colorbar_label.setPixmap(pixmap)
         sfm_pin_layout.addWidget(self._sfm_pin_colorbar_label)
 
+        # Pin Detection Tab with Splitter
+        self._tab_pin_detect_widget = QWidget()
+        pin_detect_layout = QHBoxLayout(self._tab_pin_detect_widget)
+        pin_detect_layout.setContentsMargins(0, 0, 0, 0)
+        
+        pin_detect_splitter = QSplitter(Qt.Horizontal)
+        pin_detect_splitter.setHandleWidth(2)
+        pin_detect_splitter.setStyleSheet("QSplitter::handle { background-color: #A0A0A0; }")
+
+        # SfM Container (Left)
+        sfm_container = QWidget()
+        sfm_layout = QVBoxLayout(sfm_container)
+        sfm_layout.setContentsMargins(0, 0, 0, 0)
+        
+        sfm_label = QLabel("SfM")
+        sfm_label.setAlignment(Qt.AlignCenter)
+        sfm_label.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
+        
+        self._plotter_pin_detect_sfm = QtInteractor(sfm_container)
+        sfm_layout.addWidget(sfm_label)
+        sfm_layout.addWidget(self._plotter_pin_detect_sfm)
+
+        # RGBD Container (Right)
+        rgbd_container = QWidget()
+        rgbd_layout = QVBoxLayout(rgbd_container)
+        rgbd_layout.setContentsMargins(0, 0, 0, 0)
+        
+        rgbd_label = QLabel("RGBD")
+        rgbd_label.setAlignment(Qt.AlignCenter)
+        rgbd_label.setStyleSheet("font-weight: bold; font-size: 14px; padding: 5px;")
+        
+        self._plotter_pin_detect_rgbd = QtInteractor(rgbd_container)
+        rgbd_layout.addWidget(rgbd_label)
+        rgbd_layout.addWidget(self._plotter_pin_detect_rgbd)
+        
+        pin_detect_splitter.addWidget(sfm_container)
+        pin_detect_splitter.addWidget(rgbd_container)
+        pin_detect_layout.addWidget(pin_detect_splitter)
+
         self._tabs.addTab(self._plotter_raw, "Step1: Raw")
         self._tabs.addTab(self._tab_sfm_pin_widget, "Step2: SfM Pin")
-        self._tabs.addTab(self._plotter_pin_detect, "Step3: Pin Detection")
+        self._tabs.addTab(self._tab_pin_detect_widget, "Step3: Pin Detection")
         self._tabs.addTab(self._plotter_aligned, "Step4: Aligned")
 
         # Connect tab changes to update views
@@ -133,7 +172,8 @@ class Viewer3D(QWidget):
         return [
             self._plotter_raw,
             self._plotter_aligned,
-            self._plotter_pin_detect,
+            self._plotter_pin_detect_sfm,
+            self._plotter_pin_detect_rgbd,
             self._plotter_sfm_pin,
         ]
 
@@ -633,73 +673,69 @@ class Viewer3D(QWidget):
 
     def _update_pin_detection_view(self) -> None:
         """Update the Pin Detection view."""
-        self._plotter_pin_detect.clear()
+        self._plotter_pin_detect_sfm.clear()
+        self._plotter_pin_detect_rgbd.clear()
+        
         if self._pin_detection_data is None:
             return
             
-        # SfM Data (Left side or Overlay?)
-        # User said: "Pin Detection tab... parallel... as Figure 3"
-        # Figure 3 usually implies showing results. 
-        # But "SfM Pin" was tab 2 (Figure 2).
-        # "Pin Detection" is tab 3.
-        # Let's place SfM at Origin, RGBD at some offset (e.g. 0.2).
-        
         data = self._pin_detection_data
         
-        # --- SfM Group (at 0,0,0) ---
+        # --- SfM Group (Left Viewer) ---
         sfm_offset = np.array([0, 0, 0])
         
-        # 1. SfM Cloud (with red pin highlighting?)
-        # Use 'pcd' but maybe we want to overlay 'pin_pcd' in Red?
+        # 1. SfM Cloud
         if 'sfm_pcd' in data:
             self._add_mesh_to_plotter(
-                self._plotter_pin_detect, data['sfm_pcd'], offset=sfm_offset, color="gray"
+                self._plotter_pin_detect_sfm, data['sfm_pcd'], offset=sfm_offset, color="gray"
             )
         
         if 'sfm_pin_pcd' in data:
              self._add_mesh_to_plotter(
-                self._plotter_pin_detect, data['sfm_pin_pcd'], offset=sfm_offset, color="red"
+                self._plotter_pin_detect_sfm, data['sfm_pin_pcd'], offset=sfm_offset, color="red"
             )
             
         # 2. Disk
         if 'sfm_disk' in data:
              self._add_mesh_to_plotter(
-                self._plotter_pin_detect, data['sfm_disk'], offset=sfm_offset, color="red"
+                self._plotter_pin_detect_sfm, data['sfm_disk'], offset=sfm_offset, color="red"
             )
             
         # 3. Arrow
         if 'sfm_arrow' in data:
              self._add_mesh_to_plotter(
-                self._plotter_pin_detect, data['sfm_arrow'], offset=sfm_offset, color="red"
+                self._plotter_pin_detect_sfm, data['sfm_arrow'], offset=sfm_offset, color="red"
             )
+
+        self._plotter_pin_detect_sfm.reset_camera()
             
-        # --- RGBD Group (at offset) ---
-        rgbd_offset = np.array([0.2, 0, 0])
+        # --- RGBD Group (Right Viewer) ---
+        rgbd_offset = np.array([0, 0, 0]) # No offset needed for separate viewer
         
         # 1. RGBD Cloud
         if 'rgbd_pcd' in data:
              self._add_mesh_to_plotter(
-                self._plotter_pin_detect, data['rgbd_pcd'], offset=rgbd_offset, color="gray"
+                self._plotter_pin_detect_rgbd, data['rgbd_pcd'], offset=rgbd_offset, color="gray"
             )
         
         if 'rgbd_pin_pcd' in data:
              self._add_mesh_to_plotter(
-                self._plotter_pin_detect, data['rgbd_pin_pcd'], offset=rgbd_offset, color="yellow"
+                self._plotter_pin_detect_rgbd, data['rgbd_pin_pcd'], offset=rgbd_offset, color="red"
             )
 
         # 2. Disk
         if 'rgbd_disk' in data:
              self._add_mesh_to_plotter(
-                self._plotter_pin_detect, data['rgbd_disk'], offset=rgbd_offset, color="yellow"
+                self._plotter_pin_detect_rgbd, data['rgbd_disk'], offset=rgbd_offset, color="red"
             )
             
         # 3. Arrow
         if 'rgbd_arrow' in data:
              self._add_mesh_to_plotter(
-                self._plotter_pin_detect, data['rgbd_arrow'], offset=rgbd_offset, color="yellow"
+                self._plotter_pin_detect_rgbd, data['rgbd_arrow'], offset=rgbd_offset, color="red"
             )
 
-        self._plotter_pin_detect.reset_camera()
+        self._plotter_pin_detect_rgbd.reset_camera()
 
     @Slot(int)
     def _on_tab_changed(self, index: int) -> None:
@@ -716,11 +752,13 @@ class Viewer3D(QWidget):
         self._plotter_raw.clear()
         self._plotter_aligned.clear()
         self._plotter_sfm_pin.clear()
-        self._plotter_pin_detect.clear()
+        self._plotter_pin_detect_sfm.clear()
+        self._plotter_pin_detect_rgbd.clear()
 
     def close_plotters(self) -> None:
         """Clean up plotters on close."""
         self._plotter_raw.close()
         self._plotter_aligned.close()
         self._plotter_sfm_pin.close()
-        self._plotter_pin_detect.close()
+        self._plotter_pin_detect_sfm.close()
+        self._plotter_pin_detect_rgbd.close()
