@@ -197,6 +197,10 @@ class DataLoader:
         pid: str,
         visualize: bool = False,
         status_callback=None,
+        initial_thresh: float = None,
+        hsv_weights: list[float] = None,
+        target_hull_volume: float = 100.0,
+        threshold_callback=None,
     ) -> dict:
         """
         Load SfM point cloud data for a potato ID.
@@ -210,6 +214,15 @@ class DataLoader:
         status_callback : callable, optional
             Callback function with signature `(message: str) -> None`.
             Used to send progress updates during pin segmentation.
+        initial_thresh : float, optional
+            Initial HSV color distance threshold. If None, uses default 0.35.
+        hsv_weights : list[float], optional
+            HSV channel weights [H, S, V], default [0.8, 0.1, 0.1].
+        target_hull_volume : float, optional
+            Target hull volume limit in mm³ (default 100.0).
+        threshold_callback : callable, optional
+            Callback with signature `(threshold: float) -> None`.
+            Called during iteration to update UI with current threshold.
 
         Returns
         -------
@@ -222,13 +235,22 @@ class DataLoader:
             - 'hsv_weight': list
             - 'stop_thresh': float
             - Additional visualization data if visualize=True.
+
+        Raises
+        ------
+        InsufficientPinPointsError
+            When threshold yields too few points for convex hull.
         """
         self._init_fetchers()
         return self._sfm_fetcher.get(
             pid,
+            thresh=initial_thresh,
             visualize=visualize,
             show=False,
             status_callback=status_callback,
+            hsv_weights=hsv_weights,
+            target_hull_volume=target_hull_volume,
+            threshold_callback=threshold_callback,
         )
 
     def get_output_path(self, pid: str) -> Path:

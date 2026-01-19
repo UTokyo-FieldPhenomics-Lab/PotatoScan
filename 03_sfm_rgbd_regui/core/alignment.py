@@ -56,6 +56,45 @@ class AlignmentParams:
 
 
 @dataclass
+class SfMPinParams:
+    """
+    Parameters for SfM pin segmentation using HSV color distance.
+
+    Parameters
+    ----------
+    initial_threshold : float
+        Initial HSV color distance threshold (default 0.35).
+        Higher values include more points in initial segmentation.
+    hsv_weight_h : float
+        Weight for Hue channel (0-1, default 0.8).
+    hsv_weight_s : float
+        Weight for Saturation channel (0-1, default 0.1).
+    hsv_weight_v : float
+        Weight for Value channel (0-1, default 0.1).
+    target_hull_volume : float
+        Target hull volume limit in mm³ (default 100.0).
+        Algorithm iterates until hull volume is below this threshold.
+
+    Examples
+    --------
+    >>> params = SfMPinParams()
+    >>> params.hsv_weights
+    [0.8, 0.1, 0.1]
+    """
+
+    initial_threshold: float = 0.35
+    hsv_weight_h: float = 0.8
+    hsv_weight_s: float = 0.1
+    hsv_weight_v: float = 0.1
+    target_hull_volume: float = 100.0
+
+    @property
+    def hsv_weights(self) -> list[float]:
+        """Return HSV weights as list [H, S, V]."""
+        return [self.hsv_weight_h, self.hsv_weight_s, self.hsv_weight_v]
+
+
+@dataclass
 class AlignmentResult:
     """
     Result from alignment computation.

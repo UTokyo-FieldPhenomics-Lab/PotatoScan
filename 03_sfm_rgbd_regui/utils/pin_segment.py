@@ -28,6 +28,45 @@ import warnings
 from loguru import logger
 
 
+class InsufficientPinPointsError(Exception):
+    """
+    Raised when pin segmentation finds too few points to compute convex hull.
+
+    This typically occurs when the HSV threshold is too low for the given
+    point cloud's color distribution. User should increase the initial
+    HSV threshold parameter.
+
+    Parameters
+    ----------
+    message : str
+        Error message describing the issue.
+    points_found : int
+        Number of points found (less than 4 required for hull).
+    threshold : float
+        The threshold value that was used.
+
+    Examples
+    --------
+    >>> raise InsufficientPinPointsError(
+    ...     "Too few points for convex hull",
+    ...     points_found=2,
+    ...     threshold=0.35
+    ... )
+    """
+
+    def __init__(
+        self,
+        message: str,
+        points_found: int = 0,
+        threshold: float = 0.0,
+    ) -> None:
+        self.points_found = points_found
+        self.threshold = threshold
+        super().__init__(
+            f"{message} (found {points_found} points at threshold {threshold:.2f})"
+        )
+
+
 def _load_coco_silent(coco_file: str) -> COCO:
     """
     Load COCO annotations without printing to stdout.
@@ -754,16 +793,19 @@ class SfMPinFetcher():
         visualize: bool = False,
         show: bool = False,
         status_callback=None,
+        hsv_weights: list[float] = None,
+        target_hull_volume: float = 100.0,
+        threshold_callback=None,
     ):
         """
         Get SfM point cloud with pin segmentation.
-        
+
         Parameters
         ----------
         potato_id : str
             The name of potato, remove the file suffix.
         thresh : float, optional
-            The threshold for calculating color differences 
+            The threshold for calculating color differences
             between pin and potato surface, by default None.
         nb_points : int, optional
             Number of points for radius outlier removal.
@@ -776,6 +818,13 @@ class SfMPinFetcher():
         status_callback : callable, optional
             A callback function with signature `(message: str) -> None`.
             Used to send progress updates to the GUI statusbar.
+        hsv_weights : list[float], optional
+            HSV channel weights [H, S, V], default [0.8, 0.1, 0.1].
+        target_hull_volume : float, optional
+            Target hull volume limit in mm³ (default 100.0).
+        threshold_callback : callable, optional
+            Callback with signature `(threshold: float) -> None`.
+            Called during iteration to update UI with current threshold.
 
         Returns
         -------
@@ -784,30 +833,47 @@ class SfMPinFetcher():
             - 'pcd': whole potato point cloud
             - 'pin_pcd': point cloud of pin on potato surface
             - 'pin_idx': the index of pin points in whole potato point cloud
+
+        Raises
+        ------
+        InsufficientPinPointsError
+            When initial threshold yields too few points for convex hull.
         """
         logger.info(f"SfMPinFetcher.get() called with potato_id={potato_id}")
-        
+
         try:
             # Get year and pin color for this potato
             year, pin_color = self._get_potato_info(potato_id)
             logger.debug(f"Got potato info: year={year}, pin_color={pin_color}")
-            
+
             # Get reference HSV color
             ref_color_hsv = self._get_ref_color_hsv(year, pin_color)
             logger.debug(f"Got ref color HSV: {ref_color_hsv}")
-            
+
             # Run HSV-based pin segmentation
             logger.debug(f"Running hsv_ref_pin for {potato_id}")
             rc = self.hsv_ref_pin(
-                self.sfm_pcd_folder, potato_id, ref_color_hsv, 
-                thresh, nb_points, radius, visualize, show,
+                self.sfm_pcd_folder,
+                potato_id,
+                ref_color_hsv,
+                thresh,
+                nb_points,
+                radius,
+                visualize,
+                show,
                 status_callback=status_callback,
+                hsv_weights=hsv_weights,
+                target_hull_volume=target_hull_volume,
+                threshold_callback=threshold_callback,
             )
-            
+
             rc['pin_pcd'] = rc['pcd'].select_by_index(rc['pin_idx'])
             logger.info(f"Successfully processed {potato_id}")
             return rc
-            
+
+        except InsufficientPinPointsError:
+            # Re-raise without wrapping to preserve the specific error
+            raise
         except Exception as e:
             logger.exception(f"Error in SfMPinFetcher.get() for {potato_id}")
             raise
@@ -859,10 +925,13 @@ class SfMPinFetcher():
         visualize: bool = False,
         show: bool = False,
         status_callback=None,
+        hsv_weights: list[float] = None,
+        target_hull_volume: float = 100.0,
+        threshold_callback=None,
     ):
         """
         Perform HSV-based pin segmentation on SfM point cloud.
-        
+
         Parameters
         ----------
         sfm_pcd_folder : Path
@@ -883,12 +952,29 @@ class SfMPinFetcher():
             Show intermediate results.
         status_callback : callable, optional
             Callback for status updates with signature `(message: str) -> None`.
-        
+        hsv_weights : list[float], optional
+            HSV channel weights [H, S, V], default [0.8, 0.1, 0.1].
+        target_hull_volume : float, optional
+            Target hull volume limit in mm³ (default 100.0).
+        threshold_callback : callable, optional
+            Callback with signature `(threshold: float) -> None`.
+            Called during iteration to update UI with current threshold.
+
         Returns
         -------
         dict
             Result container with pin indices and point cloud data.
+
+        Raises
+        ------
+        InsufficientPinPointsError
+            When threshold yields too few points for convex hull.
         """
+        # Use default HSV weights if not provided
+        if hsv_weights is None:
+            hsv_weights = [0.8, 0.1, 0.1]
+        HSV_WEIGHT = hsv_weights
+
         # get the sfm pcd
         sfm_pcd_path = sfm_pcd_folder / potato_id / f"{potato_id}_30000.ply"
         logger.debug(f"Reading SfM point cloud: {sfm_pcd_path}")
@@ -907,7 +993,6 @@ class SfMPinFetcher():
             1 - color_distance_diff[need_hue_reverse, 0]
         )
 
-        HSV_WEIGHT = [0.8, 0.1, 0.1]
         color_distance_weight = color_distance_diff * np.array(HSV_WEIGHT)
         color_distance = color_distance_weight.sum(axis=1)
 
@@ -923,66 +1008,95 @@ class SfMPinFetcher():
             if status_callback is not None:
                 status_callback(msg)
 
+        # Helper to update threshold in UI
+        def _update_threshold(current_thresh: float) -> None:
+            if threshold_callback is not None:
+                threshold_callback(current_thresh)
+
         _update_status("Iterative pin segmentation of SfM point clouds...")
 
-        # manually set the threshold
-        if thresh is not None:
-            hull_volume, pin_idx = self.iter_hull_volume_by_thresh(
-                sfm_pcd, color_distance_norm, thresh
-            )
-        
-        # looping the thresh to denoise
-        else:
+        # Use initial threshold (passed or default 0.35)
+        if thresh is None:
             thresh = 0.35
-            hull_volume, pin_idx = self.iter_hull_volume_by_thresh(
-                sfm_pcd, color_distance_norm, thresh
+
+        # Initial segmentation with starting threshold
+        hull_volume, pin_idx = self.iter_hull_volume_by_thresh(
+            sfm_pcd, color_distance_norm, thresh
+        )
+        _update_threshold(thresh)
+
+        # Check for insufficient points at initial threshold
+        if len(pin_idx) < 4:
+            raise InsufficientPinPointsError(
+                "Initial pin points too few. Please increase Initial HSV Threshold.",
+                points_found=len(pin_idx),
+                threshold=thresh,
             )
 
-            while hull_volume > 100:
-                pin_pcd = sfm_pcd.select_by_index(pin_idx)
-                pin_pcd_num = len(pin_pcd.points)
+        # Iterative denoise loop - reduce threshold until hull volume is small enough
+        while hull_volume > target_hull_volume:
+            pin_pcd = sfm_pcd.select_by_index(pin_idx)
+            pin_pcd_num = len(pin_pcd.points)
 
-                if pin_pcd_num > 10000:
-                    msg = (
-                        f"Thresh={thresh:.2f}: hull={hull_volume:.1f}mm³ "
-                        f"({pin_pcd_num} pts) - too large, reducing threshold"
-                    )
-                    _update_status(msg)
-                    keeped, keeped_idx = pin_pcd, pin_idx
-                else:
-                    msg = (
-                        f"Thresh={thresh:.2f}: hull={hull_volume:.1f}mm³ "
-                        f"({pin_pcd_num} pts) - denoising..."
-                    )
-                    _update_status(msg)
-                    keeped, keeped_idx = pin_pcd.remove_radius_outlier(
-                        nb_points=min(40, int(pin_pcd_num / 20)), radius=0.005
-                    )
-
-                denoised_volume = self.get_hull_volume(keeped)
-
-                if denoised_volume > 100:
-                    thresh -= 0.05
-                    if thresh < 0:
-                        raise ValueError("Threshold cannot be below 0")
-                    hull_volume, pin_idx = self.iter_hull_volume_by_thresh(
-                        sfm_pcd, color_distance_norm, thresh
-                    )
-                else:
-                    hull_volume = denoised_volume
-                    pin_idx = pin_idx[keeped_idx]
-                    msg = (
-                        f"Pin segmentation complete: thresh={thresh:.2f}, "
-                        f"hull={hull_volume:.2f}mm³ (denoised)"
-                    )
-                    _update_status(msg)
-                    break
-            else:
+            if pin_pcd_num > 10000:
                 msg = (
-                    f"Pin segmentation complete: thresh={thresh:.2f}, "
-                    f"hull={hull_volume:.2f}mm³"
+                    f"Thresh={thresh:.2f}: hull={hull_volume:.1f}mm³ "
+                    f"({pin_pcd_num} pts) - too large, reducing threshold"
                 )
                 _update_status(msg)
+                keeped, keeped_idx = pin_pcd, pin_idx
+            else:
+                msg = (
+                    f"Thresh={thresh:.2f}: hull={hull_volume:.1f}mm³ "
+                    f"({pin_pcd_num} pts) - denoising..."
+                )
+                _update_status(msg)
+                keeped, keeped_idx = pin_pcd.remove_radius_outlier(
+                    nb_points=min(40, int(pin_pcd_num / 20)), radius=0.005
+                )
+
+            denoised_volume = self.get_hull_volume(keeped)
+
+            if denoised_volume > target_hull_volume:
+                thresh -= 0.05
+                _update_threshold(thresh)
+
+                if thresh < 0:
+                    raise InsufficientPinPointsError(
+                        "Threshold reduced below 0. Please increase Initial HSV Threshold.",
+                        points_found=len(pin_idx),
+                        threshold=thresh,
+                    )
+
+                hull_volume, pin_idx = self.iter_hull_volume_by_thresh(
+                    sfm_pcd, color_distance_norm, thresh
+                )
+
+                # Check for insufficient points after reducing threshold
+                if len(pin_idx) < 4:
+                    raise InsufficientPinPointsError(
+                        "Pin points too few after threshold reduction. "
+                        "Please increase Initial HSV Threshold.",
+                        points_found=len(pin_idx),
+                        threshold=thresh,
+                    )
+            else:
+                hull_volume = denoised_volume
+                pin_idx = pin_idx[keeped_idx]
+                msg = (
+                    f"Pin segmentation complete: thresh={thresh:.2f}, "
+                    f"hull={hull_volume:.2f}mm³ (denoised)"
+                )
+                _update_status(msg)
+                _update_threshold(thresh)
+                break
+        else:
+            msg = (
+                f"Pin segmentation complete: thresh={thresh:.2f}, "
+                f"hull={hull_volume:.2f}mm³"
+            )
+            _update_status(msg)
+            _update_threshold(thresh)
 
         results_container = {
             "pin_idx": pin_idx,

@@ -42,6 +42,7 @@ from core import (
 from widgets import FileTreeWidget, ParameterPanel, RmseChartWidget, Viewer3D
 from ui.preferences_dialog import PreferencesDialog
 from utils import pin_center as util_pc
+from utils.pin_segment import InsufficientPinPointsError
 from loguru import logger
 
 
@@ -145,6 +146,9 @@ class MainWindow(QMainWindow):
         param_layout = QVBoxLayout(param_group)
         self._param_panel = ParameterPanel()
         self._param_panel.params_changed.connect(self._on_params_changed)
+        self._param_panel.sfm_pin_params_changed.connect(
+            self._on_sfm_pin_params_changed
+        )
         param_layout.addWidget(self._param_panel)
         layout.addWidget(param_group)
 
@@ -390,16 +394,28 @@ class MainWindow(QMainWindow):
 
         self._current_pid = pid
         self._manual_specified_angles = []  # Clear manual angles for new item
+
+        # Reset Step 2 (SfM Pin) and Step 3 (Pin Neighbor) params for new item
+        # Preserves Step 4 (ICP) params
+        self._param_panel.reset_step2_and_step3()
+
         self._status_bar.showMessage(f"Loading {pid}...")
         QApplication.processEvents()
 
         try:
+            # Get current SfM pin params for loading
+            sfm_params = self._param_panel.get_sfm_pin_params()
+
             # Load data
             self._current_rgbd = self._loader.load_rgbd(pid, visualize=True)
             self._current_sfm = self._loader.load_sfm(
                 pid,
                 visualize=True,
                 status_callback=self._update_statusbar,
+                initial_thresh=sfm_params.initial_threshold,
+                hsv_weights=sfm_params.hsv_weights,
+                target_hull_volume=sfm_params.target_hull_volume,
+                threshold_callback=self._on_threshold_update,
             )
 
             logger.info("Loaded SfM data: {}", self._current_sfm)
@@ -502,6 +518,21 @@ class MainWindow(QMainWindow):
 
             # Run alignment (initially clean)
             self._run_alignment(selected_peak_idx=selected_peak_idx, is_dirty=False)
+
+        except InsufficientPinPointsError as e:
+            # Friendly error for too few pin points
+            QMessageBox.warning(
+                self,
+                "Pin Segmentation Failed",
+                f"Initial pin points too few ({e.points_found} points found).\n\n"
+                f"Please increase the 'Initial Threshold' in Step 2 panel\n"
+                f"and try loading this item again.",
+            )
+            self._status_bar.showMessage(
+                f"Pin segmentation failed for {pid} - increase threshold"
+            )
+            # Clear current item so user must reload
+            self._current_sfm = None
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load {pid}:\n{e}")
@@ -612,16 +643,31 @@ class MainWindow(QMainWindow):
     def _update_statusbar(self, message: str) -> None:
         """
         Update the statusbar with a message and process events.
-        
+
         This method can be used as a callback for long-running operations
         to provide real-time feedback in the GUI.
-        
+
         Parameters
         ----------
         message : str
             The message to display in the statusbar.
         """
         self._status_bar.showMessage(message)
+        QApplication.processEvents()
+
+    def _on_threshold_update(self, threshold: float) -> None:
+        """
+        Handle threshold updates during iterative pin segmentation.
+
+        Updates the 'Current Threshold' label in the parameter panel
+        in real-time as the algorithm adjusts the threshold.
+
+        Parameters
+        ----------
+        threshold : float
+            Current threshold value being used.
+        """
+        self._param_panel.set_current_threshold(threshold)
         QApplication.processEvents()
 
     @Slot(object)
@@ -636,6 +682,68 @@ class MainWindow(QMainWindow):
             # Preserve current selected peak index
             current_peak_idx = self._current_result.selected_peak_idx
             self._run_alignment(selected_peak_idx=current_peak_idx, is_dirty=True)
+
+    @Slot(object)
+    def _on_sfm_pin_params_changed(self, sfm_params) -> None:
+        """
+        Handle Step 2 SfM pin parameter changes.
+
+        Reloads the SfM data with new HSV parameters when the user modifies
+        controls in the Step 2 panel.
+
+        Parameters
+        ----------
+        sfm_params : SfMPinParams
+            New SfM pin segmentation parameters.
+        """
+        if self._loader is None or self._current_pid is None:
+            return
+
+        self._status_bar.showMessage(
+            f"Reloading SfM data for {self._current_pid}..."
+        )
+        QApplication.processEvents()
+
+        try:
+            # Reload SfM data with new parameters
+            self._current_sfm = self._loader.load_sfm(
+                self._current_pid,
+                visualize=True,
+                status_callback=self._update_statusbar,
+                initial_thresh=sfm_params.initial_threshold,
+                hsv_weights=sfm_params.hsv_weights,
+                target_hull_volume=sfm_params.target_hull_volume,
+                threshold_callback=self._on_threshold_update,
+            )
+
+            logger.info("Reloaded SfM data: {}", self._current_sfm)
+
+            # Update viewer with new SfM data
+            self._viewer.set_raw_cloud(
+                self._current_sfm["pcd"], self._current_rgbd["pcd"]
+            )
+            self._viewer.set_sfm_pin_data(self._current_sfm)
+
+            # Re-run alignment
+            self._run_alignment(selected_peak_idx=0, is_dirty=True)
+
+        except InsufficientPinPointsError as e:
+            QMessageBox.warning(
+                self,
+                "Pin Segmentation Failed",
+                f"Pin points too few ({e.points_found} points found).\n\n"
+                f"Please increase the 'Initial Threshold' further.",
+            )
+            self._status_bar.showMessage(
+                f"Pin segmentation failed - increase threshold"
+            )
+
+        except Exception as e:
+            logger.exception(f"Failed to reload SfM data")
+            QMessageBox.critical(
+                self, "Error", f"Failed to reload SfM data:\n{e}"
+            )
+            self._status_bar.showMessage("Reload failed")
 
     @Slot(int)
     def _on_peak_changed(self, peak_idx: int) -> None:
