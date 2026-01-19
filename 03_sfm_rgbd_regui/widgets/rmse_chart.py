@@ -52,6 +52,7 @@ class RmseChartWidget(QWidget):
         self._angles: np.ndarray = np.array([])
         self._rmses: np.ndarray = np.array([])
         self._peaks: np.ndarray = np.array([])
+        self._manual_peak_flags: np.ndarray = np.array([], dtype=bool)
         self._current_peak: int = 0
         self._setup_ui()
 
@@ -106,6 +107,7 @@ class RmseChartWidget(QWidget):
         rmses: np.ndarray,
         peaks: np.ndarray,
         selected: int = 0,
+        manual_peak_flags: Optional[np.ndarray] = None,
     ) -> None:
         """
         Set chart data.
@@ -120,11 +122,18 @@ class RmseChartWidget(QWidget):
             Indices of local minima in angles array.
         selected : int
             Currently selected peak index.
+        manual_peak_flags : np.ndarray, optional
+            Boolean array indicating which peaks are manual (same length as peaks).
         """
         self._angles = angles
         self._rmses = rmses
         self._peaks = peaks
         self._current_peak = selected
+        # Default to all False if not provided
+        if manual_peak_flags is not None:
+            self._manual_peak_flags = manual_peak_flags
+        else:
+            self._manual_peak_flags = np.zeros(len(peaks), dtype=bool)
         self._update_chart()
         self._update_buttons()
 
@@ -140,18 +149,38 @@ class RmseChartWidget(QWidget):
         self._ax.plot(self._angles, self._rmses, "b-", linewidth=1.5, label="RMSE")
 
         # Plot peak markers
-        # Plot peak markers
         has_potential_label = False
+        has_manual_label = False
         for i, peak_idx in enumerate(self._peaks):
             angle = self._angles[peak_idx]
+            is_manual = (
+                i < len(self._manual_peak_flags) and self._manual_peak_flags[i]
+            )
+
             if i == self._current_peak:
+                # Current selected peak - red solid or dashed based on manual
+                linestyle = "--" if is_manual else "-"
                 self._ax.axvline(
                     x=angle,
                     color="red",
                     linewidth=2,
+                    linestyle=linestyle,
                     label="Current",
                 )
+            elif is_manual:
+                # Manual peak - orange dashed
+                label = "Manual" if not has_manual_label else "_nolegend_"
+                self._ax.axvline(
+                    x=angle,
+                    color="orange",
+                    linewidth=1.5,
+                    linestyle="--",
+                    alpha=0.8,
+                    label=label,
+                )
+                has_manual_label = True
             else:
+                # Auto-detected potential peak - gray solid
                 label = "Potential" if not has_potential_label else "_nolegend_"
                 self._ax.axvline(
                     x=angle,
@@ -162,7 +191,7 @@ class RmseChartWidget(QWidget):
                 )
                 has_potential_label = True
 
-        # Labels and title (Removed text as per request, handled by Qt labels)
+        # Labels and title (handled by Qt labels)
         self._ax.set_xlabel("")
         self._ax.set_ylabel("RMSE")
         self._ax.set_title("")
@@ -171,7 +200,7 @@ class RmseChartWidget(QWidget):
         if len(self._peaks) > 0:
             self._ax.legend(loc="upper right", fontsize=8)
 
-        self._figure.tight_layout() # re-apply tight layout
+        self._figure.tight_layout()
         self._canvas.draw()
 
     def _update_buttons(self) -> None:
@@ -216,6 +245,7 @@ class RmseChartWidget(QWidget):
         self._angles = np.array([])
         self._rmses = np.array([])
         self._peaks = np.array([])
+        self._manual_peak_flags = np.array([], dtype=bool)
         self._current_peak = 0
         self._ax.clear()
         self._canvas.draw()

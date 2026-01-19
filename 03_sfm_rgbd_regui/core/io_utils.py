@@ -49,6 +49,7 @@ def save_result_json(
     hsv_denoised_volume: Optional[float] = None,
     peak_angles: Optional[Union[list, np.ndarray]] = None,
     selected_peak_idx: Optional[int] = None,
+    manual_potential_indices: Optional[list] = None,
 ) -> None:
     """
     Save alignment result to JSON file.
@@ -91,6 +92,8 @@ def save_result_json(
         List of potential local minima angles.
     selected_peak_idx : int, optional
         Index of the selected peak in the angles list.
+    manual_potential_indices : list, optional
+        Indices (in peak_angles) of manually specified angles.
 
     Examples
     --------
@@ -114,6 +117,15 @@ def save_result_json(
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Build rms_analysis section
+    rms_analysis = {
+        "potential_local_minima": peak_angles if peak_angles is not None else [],
+        "selected": selected_peak_idx if selected_peak_idx is not None else 0,
+    }
+    # Add manual_potential only if list is not empty
+    if manual_potential_indices:
+        rms_analysis["manual_potential"] = manual_potential_indices
 
     result = {
         "rgbd_pcd_file": rgbd_pcd_file,
@@ -146,10 +158,7 @@ def save_result_json(
                 "iter_distance(m)": icp_threshold,
                 "geometry_weight": geometry_weight,
             },
-            "rms_analysis": {
-                "potential_local_minima": peak_angles if peak_angles is not None else [],
-                "selected": selected_peak_idx if selected_peak_idx is not None else 0,
-            },
+            "rms_analysis": rms_analysis,
         },
     }
 

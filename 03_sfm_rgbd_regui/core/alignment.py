@@ -89,6 +89,7 @@ class AlignmentResult:
     sfm_pin_data: dict = field(default_factory=dict)
     rgbd_pin_data: dict = field(default_factory=dict)
     nuv_matrices: list = field(default_factory=list)
+    manual_potential_indices: list = field(default_factory=list)
 
 
 class Aligner:
@@ -486,6 +487,7 @@ class Aligner:
             sfm_pin_data=last.sfm_pin_data,
             rgbd_pin_data=last.rgbd_pin_data,
             nuv_matrices=last.nuv_matrices,
+            manual_potential_indices=last.manual_potential_indices,
         )
 
     def update_params(self, params: AlignmentParams) -> None:
