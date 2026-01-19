@@ -45,12 +45,21 @@ class ParameterPanel(QWidget):
     params_changed : Signal(AlignmentParams)
         Emitted when any parameter changes (debounced).
 
+    Attributes
+    ----------
+    DEFAULT_PARAMS : AlignmentParams
+        Default parameter values from AlignmentParams dataclass.
+
     Examples
     --------
     >>> panel = ParameterPanel()
     >>> panel.params_changed.connect(on_params_change)
     >>> params = panel.get_params()
     """
+
+    # Default values from AlignmentParams dataclass
+    DEFAULT_PARAMS: AlignmentParams = AlignmentParams()
+
     params_changed = Signal(object)  # AlignmentParams
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -77,10 +86,10 @@ class ParameterPanel(QWidget):
         pin_layout = QFormLayout(pin_group)
 
         self._spin_search_radius = QDoubleSpinBox()
-        self._spin_search_radius.setRange(0.01, 0.10)
-        self._spin_search_radius.setSingleStep(0.005)
-        self._spin_search_radius.setDecimals(3)
-        self._spin_search_radius.setValue(0.03)
+        self._spin_search_radius.setRange(0.001, 0.10)
+        self._spin_search_radius.setSingleStep(0.001)
+        self._spin_search_radius.setDecimals(4)
+        self._spin_search_radius.setValue(0.01)
         self._spin_search_radius.setSuffix(" m")
         pin_layout.addRow("Search Radius:", self._spin_search_radius)
 
@@ -265,3 +274,19 @@ class ParameterPanel(QWidget):
             self._label_weight.setText(f"{params.geometry_weight:.2f}")
         finally:
             self._updating = False
+
+    def reset_to_defaults(self) -> None:
+        """
+        Reset all parameters to their default values.
+
+        Resets all parameter input controls to the values defined in
+        `AlignmentParams` dataclass defaults. Emits `params_changed` signal
+        to notify listeners of the change.
+
+        Examples
+        --------
+        >>> panel = ParameterPanel()
+        >>> panel.reset_to_defaults()
+        """
+        self.set_params(self.DEFAULT_PARAMS)
+        self.params_changed.emit(self.get_params())

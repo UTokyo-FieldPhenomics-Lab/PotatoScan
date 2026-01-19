@@ -208,6 +208,13 @@ class MainWindow(QMainWindow):
         # Edit menu
         edit_menu = menubar.addMenu("&Edit")
 
+        # Reset parameters action
+        reset_params_action = QAction("&Reset Parameters", self)
+        reset_params_action.triggered.connect(self._on_reset_parameters)
+        edit_menu.addAction(reset_params_action)
+
+        edit_menu.addSeparator()
+
         # Rotation Angle submenu
         rotation_menu = QMenu("Rotation &Angle", self)
         edit_menu.addMenu(rotation_menu)
@@ -623,10 +630,12 @@ class MainWindow(QMainWindow):
         if self._current_result is None:
             return
 
-        # Recompute ICP with new parameters
+        # Recompute ICP with new parameters, preserving current peak selection
         if self._aligner is not None:
             self._aligner.update_params(params)
-            self._run_alignment(is_dirty=True)
+            # Preserve current selected peak index
+            current_peak_idx = self._current_result.selected_peak_idx
+            self._run_alignment(selected_peak_idx=current_peak_idx, is_dirty=True)
 
     @Slot(int)
     def _on_peak_changed(self, peak_idx: int) -> None:
@@ -792,6 +801,13 @@ class MainWindow(QMainWindow):
         logger.debug(f"[PointSize] Resolved modifier value: {modifier.value} (Qt.AltModifier={Qt.AltModifier.value})")
         self._viewer.set_point_size_modifier(modifier)
         logger.info(f"[PointSize] Point size modifier set to: {modifier_name} (value={modifier.value})")
+
+    @Slot()
+    def _on_reset_parameters(self) -> None:
+        """Reset all parameters in the Parameters panel to their default values."""
+        self._param_panel.reset_to_defaults()
+        self._status_bar.showMessage("Parameters reset to defaults.")
+        logger.info("Parameters reset to default values.")
 
     @Slot()
     def _on_about(self) -> None:
