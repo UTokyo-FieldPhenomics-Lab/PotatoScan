@@ -87,6 +87,7 @@ class SfMPinParams:
     hsv_weight_s: float = 0.1
     hsv_weight_v: float = 0.1
     target_hull_volume: float = 100.0
+    auto_iteration: bool = True
 
     @property
     def hsv_weights(self) -> list[float]:

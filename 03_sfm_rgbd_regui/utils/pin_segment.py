@@ -796,6 +796,7 @@ class SfMPinFetcher():
         hsv_weights: list[float] = None,
         target_hull_volume: float = 100.0,
         threshold_callback=None,
+        auto_iteration: bool = True,
     ):
         """
         Get SfM point cloud with pin segmentation.
@@ -825,6 +826,9 @@ class SfMPinFetcher():
         threshold_callback : callable, optional
             Callback with signature `(threshold: float) -> None`.
             Called during iteration to update UI with current threshold.
+        auto_iteration : bool, optional
+            If True, iteratively reduce threshold until hull volume is small.
+            If False, use only initial threshold (preview mode).
 
         Returns
         -------
@@ -865,6 +869,7 @@ class SfMPinFetcher():
                 hsv_weights=hsv_weights,
                 target_hull_volume=target_hull_volume,
                 threshold_callback=threshold_callback,
+                auto_iteration=auto_iteration,
             )
 
             rc['pin_pcd'] = rc['pcd'].select_by_index(rc['pin_idx'])
@@ -928,6 +933,7 @@ class SfMPinFetcher():
         hsv_weights: list[float] = None,
         target_hull_volume: float = 100.0,
         threshold_callback=None,
+        auto_iteration: bool = True,
     ):
         """
         Perform HSV-based pin segmentation on SfM point cloud.
@@ -1027,73 +1033,91 @@ class SfMPinFetcher():
 
         # Check for insufficient points at initial threshold
         if len(pin_idx) < 4:
-            raise InsufficientPinPointsError(
-                "Initial pin points too few. Please increase Initial HSV Threshold.",
-                points_found=len(pin_idx),
-                threshold=thresh,
-            )
-
-        # Iterative denoise loop - reduce threshold until hull volume is small enough
-        while hull_volume > target_hull_volume:
-            pin_pcd = sfm_pcd.select_by_index(pin_idx)
-            pin_pcd_num = len(pin_pcd.points)
-
-            if pin_pcd_num > 10000:
-                msg = (
-                    f"Thresh={thresh:.2f}: hull={hull_volume:.1f}mm³ "
-                    f"({pin_pcd_num} pts) - too large, reducing threshold"
+            if auto_iteration:
+                # Only raise error in auto_iteration mode
+                raise InsufficientPinPointsError(
+                    "Initial pin points too few. Please increase Initial HSV Threshold.",
+                    points_found=len(pin_idx),
+                    threshold=thresh,
                 )
-                _update_status(msg)
-                keeped, keeped_idx = pin_pcd, pin_idx
             else:
-                msg = (
-                    f"Thresh={thresh:.2f}: hull={hull_volume:.1f}mm³ "
-                    f"({pin_pcd_num} pts) - denoising..."
-                )
-                _update_status(msg)
-                keeped, keeped_idx = pin_pcd.remove_radius_outlier(
-                    nb_points=min(40, int(pin_pcd_num / 20)), radius=0.005
+                # In preview mode, just log and continue with what we have
+                logger.warning(
+                    f"Only {len(pin_idx)} pin points found at thresh={thresh:.2f}"
                 )
 
-            denoised_volume = self.get_hull_volume(keeped)
+        # Iterative denoise loop (only if auto_iteration is enabled)
+        if auto_iteration:
+            while hull_volume > target_hull_volume:
+                pin_pcd = sfm_pcd.select_by_index(pin_idx)
+                pin_pcd_num = len(pin_pcd.points)
 
-            if denoised_volume > target_hull_volume:
-                thresh -= 0.05
-                _update_threshold(thresh)
-
-                if thresh < 0:
-                    raise InsufficientPinPointsError(
-                        "Threshold reduced below 0. Please increase Initial HSV Threshold.",
-                        points_found=len(pin_idx),
-                        threshold=thresh,
+                if pin_pcd_num > 10000:
+                    msg = (
+                        f"Thresh={thresh:.2f}: hull={hull_volume:.1f}mm³ "
+                        f"({pin_pcd_num} pts) - too large, reducing threshold"
+                    )
+                    _update_status(msg)
+                    keeped, keeped_idx = pin_pcd, pin_idx
+                else:
+                    msg = (
+                        f"Thresh={thresh:.2f}: hull={hull_volume:.1f}mm³ "
+                        f"({pin_pcd_num} pts) - denoising..."
+                    )
+                    _update_status(msg)
+                    keeped, keeped_idx = pin_pcd.remove_radius_outlier(
+                        nb_points=min(40, int(pin_pcd_num / 20)), radius=0.005
                     )
 
-                hull_volume, pin_idx = self.iter_hull_volume_by_thresh(
-                    sfm_pcd, color_distance_norm, thresh
-                )
+                denoised_volume = self.get_hull_volume(keeped)
 
-                # Check for insufficient points after reducing threshold
-                if len(pin_idx) < 4:
-                    raise InsufficientPinPointsError(
-                        "Pin points too few after threshold reduction. "
-                        "Please increase Initial HSV Threshold.",
-                        points_found=len(pin_idx),
-                        threshold=thresh,
+                if denoised_volume > target_hull_volume:
+                    thresh -= 0.05
+                    _update_threshold(thresh)
+
+                    if thresh < 0:
+                        raise InsufficientPinPointsError(
+                            "Threshold reduced below 0. "
+                            "Please increase Initial HSV Threshold.",
+                            points_found=len(pin_idx),
+                            threshold=thresh,
+                        )
+
+                    hull_volume, pin_idx = self.iter_hull_volume_by_thresh(
+                        sfm_pcd, color_distance_norm, thresh
                     )
+
+                    # Check for insufficient points after reducing threshold
+                    if len(pin_idx) < 4:
+                        raise InsufficientPinPointsError(
+                            "Pin points too few after threshold reduction. "
+                            "Please increase Initial HSV Threshold.",
+                            points_found=len(pin_idx),
+                            threshold=thresh,
+                        )
+                else:
+                    hull_volume = denoised_volume
+                    pin_idx = pin_idx[keeped_idx]
+                    msg = (
+                        f"Pin segmentation complete: thresh={thresh:.2f}, "
+                        f"hull={hull_volume:.2f}mm³ (denoised)"
+                    )
+                    _update_status(msg)
+                    _update_threshold(thresh)
+                    break
             else:
-                hull_volume = denoised_volume
-                pin_idx = pin_idx[keeped_idx]
+                # Loop finished without break (hull was already small enough)
                 msg = (
                     f"Pin segmentation complete: thresh={thresh:.2f}, "
-                    f"hull={hull_volume:.2f}mm³ (denoised)"
+                    f"hull={hull_volume:.2f}mm³"
                 )
                 _update_status(msg)
                 _update_threshold(thresh)
-                break
         else:
+            # Preview mode - no iteration, just use initial threshold
             msg = (
-                f"Pin segmentation complete: thresh={thresh:.2f}, "
-                f"hull={hull_volume:.2f}mm³"
+                f"Preview mode: thresh={thresh:.2f}, "
+                f"hull={hull_volume:.2f}mm³ ({len(pin_idx)} pts)"
             )
             _update_status(msg)
             _update_threshold(thresh)

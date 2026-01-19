@@ -416,6 +416,7 @@ class MainWindow(QMainWindow):
                 hsv_weights=sfm_params.hsv_weights,
                 target_hull_volume=sfm_params.target_hull_volume,
                 threshold_callback=self._on_threshold_update,
+                auto_iteration=sfm_params.auto_iteration,
             )
 
             logger.info("Loaded SfM data: {}", self._current_sfm)
@@ -520,19 +521,44 @@ class MainWindow(QMainWindow):
             self._run_alignment(selected_peak_idx=selected_peak_idx, is_dirty=False)
 
         except InsufficientPinPointsError as e:
-            # Friendly error for too few pin points
+            # Switch to preview mode - uncheck auto iteration
+            self._param_panel.set_auto_iteration(False)
+
+            # Reload SfM data in preview mode (no iteration)
+            sfm_params = self._param_panel.get_sfm_pin_params()
+            try:
+                self._current_sfm = self._loader.load_sfm(
+                    pid,
+                    visualize=True,
+                    status_callback=self._update_statusbar,
+                    initial_thresh=sfm_params.initial_threshold,
+                    hsv_weights=sfm_params.hsv_weights,
+                    target_hull_volume=sfm_params.target_hull_volume,
+                    threshold_callback=self._on_threshold_update,
+                    auto_iteration=False,
+                )
+
+                # Update Tab 2 visualization only
+                self._viewer.set_raw_cloud(
+                    self._current_sfm["pcd"], self._current_rgbd["pcd"]
+                )
+                self._viewer.set_sfm_pin_data(self._current_sfm)
+
+            except Exception as preview_err:
+                logger.exception("Failed to load preview")
+
+            # Show warning
             QMessageBox.warning(
                 self,
-                "Pin Segmentation Failed",
+                "Preview Mode",
                 f"Initial pin points too few ({e.points_found} points found).\n\n"
-                f"Please increase the 'Initial Threshold' in Step 2 panel\n"
-                f"and try loading this item again.",
+                f"Entering preview mode. Adjust 'Initial Threshold' and\n"
+                f"observe the red points in Tab 2.\n\n"
+                f"Check 'Auto Iteration' to retry with new threshold.",
             )
             self._status_bar.showMessage(
-                f"Pin segmentation failed for {pid} - increase threshold"
+                f"{pid} - Preview mode (adjust threshold)"
             )
-            # Clear current item so user must reload
-            self._current_sfm = None
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load {pid}:\n{e}")

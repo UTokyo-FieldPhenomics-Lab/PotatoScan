@@ -12,6 +12,7 @@ from typing import Optional
 from PySide6.QtCore import Signal, Slot, QTimer, Qt
 from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
@@ -153,6 +154,11 @@ class ParameterPanel(QWidget):
         self._spin_hull_volume.setSuffix(" mm³")
         sfm_layout.addRow("Target Hull Volume:", self._spin_hull_volume)
 
+        # Auto Iteration checkbox
+        self._chk_auto_iter = QCheckBox("Enable iterative threshold reduction")
+        self._chk_auto_iter.setChecked(True)
+        sfm_layout.addRow("Auto Iteration:", self._chk_auto_iter)
+
         layout.addWidget(sfm_group)
 
         # Step 3: Pin Neighbor Group
@@ -292,6 +298,9 @@ class ParameterPanel(QWidget):
             self._emit_sfm_pin_params_now
         )
 
+        # Auto Iteration checkbox - immediate emit on toggle
+        self._chk_auto_iter.stateChanged.connect(self._emit_sfm_pin_params_now)
+
         # Step 3/4: Value changes trigger timer (debounce)
         self._spin_search_radius.valueChanged.connect(self._on_param_changed)
         self._spin_cross_buffer.valueChanged.connect(self._on_param_changed)
@@ -413,6 +422,7 @@ class ParameterPanel(QWidget):
             hsv_weight_s=self._spin_hsv_s.value(),
             hsv_weight_v=self._spin_hsv_v.value(),
             target_hull_volume=self._spin_hull_volume.value(),
+            auto_iteration=self._chk_auto_iter.isChecked(),
         )
 
     def set_sfm_pin_params(self, params: SfMPinParams) -> None:
@@ -431,6 +441,7 @@ class ParameterPanel(QWidget):
             self._spin_hsv_s.setValue(params.hsv_weight_s)
             self._spin_hsv_v.setValue(params.hsv_weight_v)
             self._spin_hull_volume.setValue(params.target_hull_volume)
+            self._chk_auto_iter.setChecked(params.auto_iteration)
             self._lbl_current_thresh.setText(f"{params.initial_threshold:.2f}")
         finally:
             self._updating = False
@@ -448,6 +459,21 @@ class ParameterPanel(QWidget):
             Current threshold value being used.
         """
         self._lbl_current_thresh.setText(f"{value:.2f}")
+
+    def set_auto_iteration(self, enabled: bool) -> None:
+        """
+        Set the auto iteration checkbox state without emitting signals.
+
+        Parameters
+        ----------
+        enabled : bool
+            Whether auto iteration should be enabled.
+        """
+        self._updating = True
+        try:
+            self._chk_auto_iter.setChecked(enabled)
+        finally:
+            self._updating = False
 
     def reset_step2_and_step3(self) -> None:
         """

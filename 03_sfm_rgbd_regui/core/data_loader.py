@@ -201,6 +201,7 @@ class DataLoader:
         hsv_weights: list[float] = None,
         target_hull_volume: float = 100.0,
         threshold_callback=None,
+        auto_iteration: bool = True,
     ) -> dict:
         """
         Load SfM point cloud data for a potato ID.
@@ -223,6 +224,8 @@ class DataLoader:
         threshold_callback : callable, optional
             Callback with signature `(threshold: float) -> None`.
             Called during iteration to update UI with current threshold.
+        auto_iteration : bool, optional
+            If True, iteratively reduce threshold. If False, preview mode.
 
         Returns
         -------
@@ -251,6 +254,7 @@ class DataLoader:
             hsv_weights=hsv_weights,
             target_hull_volume=target_hull_volume,
             threshold_callback=threshold_callback,
+            auto_iteration=auto_iteration,
         )
 
     def get_output_path(self, pid: str) -> Path:
