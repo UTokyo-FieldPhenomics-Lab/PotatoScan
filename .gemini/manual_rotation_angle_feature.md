@@ -173,3 +173,73 @@ def save_result_json(
 | 手动添加 (未选中) | 橙色 | 虚线 |
 | 当前选中 (自动) | 红色 | 实线 |
 | 当前选中 (手动) | 红色 | 虚线 |
+
+---
+
+## Bug 修复记录
+
+### 修复 1：手动添加角度后自动切换
+
+**问题**：手动设置完 manual specify angle 后，没有立即切换到刚刚设置的角度
+
+**修复**：在 `_on_manual_angle_specify()` 中计算新添加角度的索引位置，并传递给 `_run_alignment()` 作为 `selected_peak_idx`
+
+```python
+# 计算新添加角度的索引
+new_peak_idx = len(self._current_result.peak_angles) + \
+    len(self._manual_specified_angles) - 1
+
+# 使用新索引重新运行对齐
+self._run_alignment(
+    selected_peak_idx=new_peak_idx,
+    is_dirty=True,
+)
+```
+
+---
+
+### 修复 2：下拉菜单过滤已存在角度
+
+**问题**：手动设置角度的弹出菜单显示了所有 0-350 的角度，包括已经存在的 potential angles
+
+**修复**：在显示对话框前，先收集所有已存在的角度（自动检测 + 手动指定），然后从选项中过滤掉
+
+```python
+# 获取已存在的角度
+existing_angles = set(self._current_result.peak_angles)
+existing_angles.update(self._manual_specified_angles)
+
+# 只显示可用的角度选项
+all_angles = list(range(0, 360, 10))
+available_angles = [a for a in all_angles if a not in existing_angles]
+```
+
+---
+
+### 修复 3：手动角度跟随当前 item
+
+**问题**：手动添加的角度是全局的，切换到新 item 后仍然保留
+
+**修复**：在 `_on_item_selected()` 中，选择新 item 时清空 `_manual_specified_angles` 列表（如果 JSON 中有保存的手动角度会在后续加载时恢复）
+
+```python
+self._current_pid = pid
+self._manual_specified_angles = []  # 清除手动角度
+```
+
+---
+
+### 修复 4：菜单顺序调整
+
+**问题**：Preferences 选项应该放在 Rotation Angle 子菜单之后
+
+**修复**：调整 `_setup_menu()` 中菜单项的顺序：
+
+```
+Edit
+├── Rotation Angle
+│   ├── Manual Specify...
+│   └── Reset Manual Angles
+├── ─────────────────
+└── Preferences...
+```

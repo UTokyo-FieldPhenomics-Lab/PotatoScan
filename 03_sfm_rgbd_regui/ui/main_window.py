@@ -208,13 +208,6 @@ class MainWindow(QMainWindow):
         # Edit menu
         edit_menu = menubar.addMenu("&Edit")
 
-        prefs_action = QAction("&Preferences...", self)
-        prefs_action.setShortcut("Ctrl+,")
-        prefs_action.triggered.connect(self._on_open_preferences)
-        edit_menu.addAction(prefs_action)
-
-        edit_menu.addSeparator()
-
         # Rotation Angle submenu
         rotation_menu = QMenu("Rotation &Angle", self)
         edit_menu.addMenu(rotation_menu)
@@ -226,6 +219,13 @@ class MainWindow(QMainWindow):
         reset_angles_action = QAction("&Reset Manual Angles", self)
         reset_angles_action.triggered.connect(self._on_reset_manual_angles)
         rotation_menu.addAction(reset_angles_action)
+
+        edit_menu.addSeparator()
+
+        prefs_action = QAction("&Preferences...", self)
+        prefs_action.setShortcut("Ctrl+,")
+        prefs_action.triggered.connect(self._on_open_preferences)
+        edit_menu.addAction(prefs_action)
 
         # View menu
         view_menu = menubar.addMenu("&View")
@@ -382,6 +382,7 @@ class MainWindow(QMainWindow):
             return
 
         self._current_pid = pid
+        self._manual_specified_angles = []  # Clear manual angles for new item
         self._status_bar.showMessage(f"Loading {pid}...")
         QApplication.processEvents()
 
@@ -560,17 +561,28 @@ class MainWindow(QMainWindow):
             for mi in manual_potential_indices:
                 if mi < len(manual_peak_flags):
                     manual_peak_flags[mi] = True
+            
+            # Determine the correct selected peak index for chart
+            # If selected_peak_idx >= auto-detected peak count, it's a manual peak
+            auto_peak_count = len(self._current_result.peak_angles)
+            if selected_peak_idx >= auto_peak_count:
+                # Manual peak - use the index as-is (already correct)
+                chart_selected_idx = selected_peak_idx
+            else:
+                # Auto-detected peak - use result's selected index
+                chart_selected_idx = self._current_result.selected_peak_idx
                     
             logger.debug(
                 f"Updating chart with {len(angles)} points, "
-                f"{len(peak_indices)} peaks, {len(manual_potential_indices)} manual"
+                f"{len(peak_indices)} peaks, {len(manual_potential_indices)} manual, "
+                f"selected={chart_selected_idx}"
             )
             
             self._rmse_chart.set_data(
                 angles,
                 rmses,
                 peak_indices,
-                self._current_result.selected_peak_idx,
+                chart_selected_idx,
                 manual_peak_flags,
             )
 
@@ -797,7 +809,8 @@ class MainWindow(QMainWindow):
         """
         Open dialog to manually specify a rotation angle.
 
-        Adds the specified angle to the potential local minima list.
+        Adds the specified angle to the potential local minima list
+        and automatically selects it.
         """
         if self._current_result is None:
             QMessageBox.warning(
@@ -807,8 +820,23 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Create list of angle options (0, 10, 20, ..., 350)
-        angle_options = [str(a) for a in range(0, 360, 10)]
+        # Get existing angles (auto-detected + manual)
+        existing_angles = set(self._current_result.peak_angles)
+        existing_angles.update(self._manual_specified_angles)
+
+        # Create list of available angle options (exclude existing)
+        all_angles = list(range(0, 360, 10))
+        available_angles = [a for a in all_angles if a not in existing_angles]
+
+        if not available_angles:
+            QMessageBox.information(
+                self,
+                "Information",
+                "All angles are already in use.",
+            )
+            return
+
+        angle_options = [str(a) for a in available_angles]
 
         angle_str, ok = QInputDialog.getItem(
             self,
@@ -824,36 +852,22 @@ class MainWindow(QMainWindow):
 
         angle = int(angle_str)
 
-        # Check if angle already exists in auto-detected peaks
-        existing_angles = list(self._current_result.peak_angles)
-        if angle in existing_angles:
-            QMessageBox.information(
-                self,
-                "Information",
-                f"Angle {angle}° is already an auto-detected peak.",
-            )
-            return
-
-        # Check if angle already exists in manual list
-        if angle in self._manual_specified_angles:
-            QMessageBox.information(
-                self,
-                "Information",
-                f"Angle {angle}° is already manually specified.",
-            )
-            return
-
-        # Add to manual angles and re-run alignment
+        # Add to manual angles
         self._manual_specified_angles.append(angle)
         logger.info(f"Added manual angle: {angle}°")
 
-        # Re-run alignment to update chart
+        # Calculate the new peak index for the manually added angle
+        # Manual angles are appended after auto-detected peaks
+        new_peak_idx = len(self._current_result.peak_angles) + \
+            len(self._manual_specified_angles) - 1
+
+        # Re-run alignment with the new angle selected
         self._run_alignment(
-            selected_peak_idx=self._current_result.selected_peak_idx,
+            selected_peak_idx=new_peak_idx,
             is_dirty=True,
         )
         self._status_bar.showMessage(
-            f"Added manual angle {angle}°. Select it from the chart."
+            f"Added and selected manual angle {angle}°."
         )
 
     @Slot()
