@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -60,28 +61,36 @@ class RmseChartWidget(QWidget):
         """Set up the widget UI."""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
 
-        # Top label (Title)
+        # Top label (Title) - fixed height for one line of text
         self._lbl_title = QLabel("Rotation Optimization - Local Minima")
         self._lbl_title.setAlignment(Qt.AlignCenter)
         font = self._lbl_title.font()
         font.setPointSize(8)
         self._lbl_title.setFont(font)
+        # Calculate fixed height based on font metrics
+        title_height = self._lbl_title.fontMetrics().height() + 4
+        self._lbl_title.setFixedHeight(title_height)
+        self._lbl_title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         layout.addWidget(self._lbl_title)
 
-        # Matplotlib figure
+        # Matplotlib figure - expandable to fill remaining space
         self._figure = Figure(figsize=(6, 2.5), dpi=100)
         self._figure.set_tight_layout(True)
         # Reduce margins to save space
         self._figure.subplots_adjust(top=0.95, bottom=0.15, left=0.1, right=0.95)
         self._canvas = FigureCanvas(self._figure)
+        self._canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._ax = self._figure.add_subplot(111)
 
-        layout.addWidget(self._canvas)
+        layout.addWidget(self._canvas, stretch=1)
 
-        # Navigation buttons and X-Axis label
-        nav_layout = QHBoxLayout()
+        # Navigation buttons and X-Axis label - fixed height container
+        nav_widget = QWidget()
+        nav_layout = QHBoxLayout(nav_widget)
         nav_layout.setContentsMargins(8, 0, 8, 4)
+        nav_layout.setSpacing(8)
 
         self._btn_prev = QPushButton("◀ Prev Peak")
         self._btn_prev.clicked.connect(self._on_prev_peak)
@@ -93,13 +102,16 @@ class RmseChartWidget(QWidget):
         font = self._lbl_xaxis.font()
         font.setPointSize(8)
         self._lbl_xaxis.setFont(font)
-        nav_layout.addWidget(self._lbl_xaxis)  # Center label
+        nav_layout.addWidget(self._lbl_xaxis, stretch=1)
 
         self._btn_next = QPushButton("Next Peak ▶")
         self._btn_next.clicked.connect(self._on_next_peak)
         nav_layout.addWidget(self._btn_next)
 
-        layout.addLayout(nav_layout)
+        # Fix navigation widget height based on button height
+        nav_widget.setFixedHeight(self._btn_prev.sizeHint().height() + 8)
+        nav_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        layout.addWidget(nav_widget)
 
     def set_data(
         self,
