@@ -199,18 +199,40 @@ class FileTreeWidget(QWidget):
 
     def get_next_uncompleted(self) -> Optional[str]:
         """
-        Get the next uncompleted potato ID.
+        Get the next uncompleted potato ID after current selection.
+
+        First searches from current position downward. If no uncompleted
+        items are found below, wraps around to search from the beginning.
 
         Returns
         -------
         str or None
             Next uncompleted ID, or None if all completed.
         """
-        for i in range(self._tree.topLevelItemCount()):
+        total_count = self._tree.topLevelItemCount()
+        if total_count == 0:
+            return None
+
+        # Find current index
+        current_idx = 0
+        selected_items = self._tree.selectedItems()
+        if selected_items:
+            current_idx = self._tree.indexOfTopLevelItem(selected_items[0])
+
+        # Search from current position + 1 to end (downward)
+        for i in range(current_idx + 1, total_count):
             item = self._tree.topLevelItem(i)
             pid = item.data(1, Qt.UserRole)
             if pid not in self._completed:
                 return pid
+
+        # Wrap around: search from beginning to current position
+        for i in range(0, current_idx + 1):
+            item = self._tree.topLevelItem(i)
+            pid = item.data(1, Qt.UserRole)
+            if pid not in self._completed:
+                return pid
+
         return None
 
     def select_next_uncompleted(self) -> bool:
