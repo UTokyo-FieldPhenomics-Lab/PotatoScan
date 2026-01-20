@@ -337,11 +337,7 @@ class Aligner:
         
         logger.info(f"Found {len(peaks)} peaks in RMSE curve")
 
-        # Sort peaks by RMSE values
-        if len(peaks) > 1:
-            peak_values = rmses[peaks]
-            order = np.argsort(peak_values)
-            peaks = peaks[order]
+
 
         result = {
             "angles": angles,
@@ -403,7 +399,7 @@ class Aligner:
         self,
         rgbd_data: dict,
         sfm_data: dict,
-        selected_peak: int = 0,
+        selected_peak: Optional[int] = None,
     ) -> AlignmentResult:
         """
         Compute full alignment pipeline.
@@ -438,8 +434,22 @@ class Aligner:
 
         # Select peak
         peaks = nuv_result["peaks"]
-        peak_idx = min(selected_peak, len(peaks) - 1)
-        best_idx = peaks[peak_idx]
+        
+        if selected_peak is None:
+            # Default to peak with lowest RMSE
+            if len(peaks) > 0:
+                peak_values = nuv_result["rmses"][peaks]
+                peak_idx = int(np.argmin(peak_values))
+            else:
+                peak_idx = 0
+        else:
+             peak_idx = min(selected_peak, len(peaks) - 1)
+
+        if len(peaks) > 0:
+            best_idx = peaks[peak_idx]
+        else:
+            # Fallback if no peaks found
+            best_idx = 0
         iimatrix = nuv_result["matrices"][best_idx] @ imatrix
 
         # Step 4: ICP refinement

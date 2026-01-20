@@ -470,7 +470,7 @@ class MainWindow(QMainWindow):
 
             # Check for existing result and load parameters
             output_path = self._loader.get_output_path(pid)
-            selected_peak_idx = 0
+            selected_peak_idx = None
             
             if output_path.exists():
                 try:
@@ -564,7 +564,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to load {pid}:\n{e}")
             self._status_bar.showMessage(f"Error loading {pid}")
 
-    def _run_alignment(self, selected_peak_idx: int = 0, is_dirty: bool = True) -> None:
+    def _run_alignment(self, selected_peak_idx: Optional[int] = None, is_dirty: bool = True) -> None:
         """Run the alignment pipeline."""
         if self._aligner is None or self._current_rgbd is None:
             logger.warning("Aligner or RGBD data missing")
@@ -629,7 +629,7 @@ class MainWindow(QMainWindow):
             # Determine the correct selected peak index for chart
             # If selected_peak_idx >= auto-detected peak count, it's a manual peak
             auto_peak_count = len(self._current_result.peak_angles)
-            if selected_peak_idx >= auto_peak_count:
+            if selected_peak_idx is not None and selected_peak_idx >= auto_peak_count:
                 # Manual peak - use the index as-is (already correct)
                 chart_selected_idx = selected_peak_idx
             else:
@@ -650,8 +650,16 @@ class MainWindow(QMainWindow):
                 manual_peak_flags,
             )
 
+            # Retrieve angle for selected peak
+            current_idx = self._current_result.selected_peak_idx
+            if 0 <= current_idx < len(self._current_result.peak_angles):
+                angle = self._current_result.peak_angles[current_idx]
+                peak_info = f", (Peak {current_idx}: {angle}°)"
+            else:
+                peak_info = ""
+
             self._status_bar.showMessage(
-                f"{self._current_pid}: RMSE={self._current_result.rmse:.6f}"
+                f"{self._current_pid}: RMSE={self._current_result.rmse:.6f}{peak_info}"
             )
             if self._is_dirty:
                 self._status_bar.showMessage(f"{self._current_pid} (Modified)")
@@ -740,6 +748,7 @@ class MainWindow(QMainWindow):
                 hsv_weights=sfm_params.hsv_weights,
                 target_hull_volume=sfm_params.target_hull_volume,
                 threshold_callback=self._on_threshold_update,
+                auto_iteration=sfm_params.auto_iteration,
             )
 
             logger.info("Reloaded SfM data: {}", self._current_sfm)
@@ -750,18 +759,46 @@ class MainWindow(QMainWindow):
             )
             self._viewer.set_sfm_pin_data(self._current_sfm)
 
-            # Re-run alignment
-            self._run_alignment(selected_peak_idx=0, is_dirty=True)
+            # Re-run alignment only if auto_iteration is enabled
+            if sfm_params.auto_iteration:
+                self._run_alignment(selected_peak_idx=None, is_dirty=True)
+            else:
+                # Preview mode - just show visualization
+                self._status_bar.showMessage(
+                    f"{self._current_pid} - Preview mode (adjust threshold)"
+                )
 
         except InsufficientPinPointsError as e:
+            # Switch to preview mode
+            self._param_panel.set_auto_iteration(False)
+
+            # Reload in preview mode
+            try:
+                self._current_sfm = self._loader.load_sfm(
+                    self._current_pid,
+                    visualize=True,
+                    status_callback=self._update_statusbar,
+                    initial_thresh=sfm_params.initial_threshold,
+                    hsv_weights=sfm_params.hsv_weights,
+                    target_hull_volume=sfm_params.target_hull_volume,
+                    threshold_callback=self._on_threshold_update,
+                    auto_iteration=False,
+                )
+                self._viewer.set_raw_cloud(
+                    self._current_sfm["pcd"], self._current_rgbd["pcd"]
+                )
+                self._viewer.set_sfm_pin_data(self._current_sfm)
+            except Exception:
+                logger.exception("Failed to load preview")
+
             QMessageBox.warning(
                 self,
-                "Pin Segmentation Failed",
+                "Preview Mode",
                 f"Pin points too few ({e.points_found} points found).\n\n"
-                f"Please increase the 'Initial Threshold' further.",
+                f"Entering preview mode. Adjust threshold.",
             )
             self._status_bar.showMessage(
-                f"Pin segmentation failed - increase threshold"
+                f"{self._current_pid} - Preview mode (adjust threshold)"
             )
 
         except Exception as e:
@@ -783,8 +820,15 @@ class MainWindow(QMainWindow):
             self._current_sfm,
         )
         self._viewer.set_transform(self._current_result.transform_matrix)
+        if 0 <= peak_idx < len(self._current_result.peak_angles):
+            angle = self._current_result.peak_angles[peak_idx]
+            peak_info = f", (Peak {peak_idx}: {angle}°)"
+        else:
+            angle = "N/A"
+            peak_info = ""
+
         self._status_bar.showMessage(
-            f"{self._current_pid}: RMSE={self._current_result.rmse:.6f} (peak {peak_idx})"
+            f"{self._current_pid}: RMSE={self._current_result.rmse:.6f}{peak_info}"
         )
         self._is_dirty = True
         self._param_panel.set_transform_matrix(
