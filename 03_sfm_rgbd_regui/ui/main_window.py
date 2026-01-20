@@ -110,6 +110,11 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(splitter)
 
+        # Connect compare mode signal (now that _viewer exists)
+        self._param_panel.compare_mode_changed.connect(
+            self._viewer.set_compare_mode
+        )
+
         # Status bar
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
@@ -151,6 +156,7 @@ class MainWindow(QMainWindow):
         self._param_panel.sfm_pin_params_changed.connect(
             self._on_sfm_pin_params_changed
         )
+        # Note: compare_mode_changed is connected in _setup_ui after _viewer is created
         param_layout.addWidget(self._param_panel)
         layout.addWidget(param_group)
 
@@ -434,6 +440,9 @@ class MainWindow(QMainWindow):
             # Pass the data loaded by SfMPinFetcher directly to the viewer
             # It already contains 'pcd', 'pcd_offset_colormap', 'pin_pcd_strengthen'
             self._viewer.set_sfm_pin_data(self._current_sfm)
+            
+            # Store RGBD data for compare mode colorization
+            self._viewer.set_rgbd_data(self._current_rgbd)
 
             # --- 2. Pin Detection Tab Data ---
             # Calculate pin center geometry (disk, arrow) for SfM

@@ -81,8 +81,10 @@ class Viewer3D(QWidget):
         self._rgbd_pcd_raw: Optional[o3d.geometry.PointCloud] = None
 
         self._sfm_pin_data: Optional[dict] = None
+        self._rgbd_data: Optional[dict] = None  # Store RGBD data for compare mode
         self._pin_detection_data: Optional[dict] = None
         self._transform: np.ndarray = np.eye(4)
+        self._compare_mode: bool = False
 
     def _setup_ui(self) -> None:
         """Set up the widget UI."""
@@ -470,6 +472,29 @@ class Viewer3D(QWidget):
         
         self._update_sfm_pin_view()
 
+    def set_rgbd_data(self, data: dict) -> None:
+        """
+        Set RGBD data for compare mode colorization.
+
+        Parameters
+        ----------
+        data : dict
+            Dictionary with 'pin_idx' for pin point indices.
+        """
+        self._rgbd_data = data
+
+    def set_compare_mode(self, enabled: bool) -> None:
+        """
+        Toggle compare mode for Tab 4 visualization.
+
+        Parameters
+        ----------
+        enabled : bool
+            If True, colorize by pin/non-pin regions.
+        """
+        self._compare_mode = enabled
+        self._update_aligned_view()
+
     def set_pin_detection_data(self, data: dict) -> None:
         """
         Set data for Pin Detection visualization.
@@ -529,8 +554,28 @@ class Viewer3D(QWidget):
         """Update the aligned (transformed) view."""
         self._plotter_aligned.clear()
 
+        # Get pin indices for compare mode
+        sfm_pin_idx = None
+        rgbd_pin_idx = None
+        if self._compare_mode:
+            if self._sfm_pin_data is not None:
+                sfm_pin_idx = self._sfm_pin_data.get("pin_idx")
+            if self._rgbd_data is not None:
+                rgbd_pin_idx = self._rgbd_data.get("pin_idx")
+
+        # SfM point cloud
         if self._sfm_pcd_raw is not None:
-            cloud = self._o3d_to_pyvista(self._sfm_pcd_raw)
+            sfm_cloud = copy.deepcopy(self._sfm_pcd_raw)
+            
+            if self._compare_mode:
+                # Compare mode: dark red for pin, light red for non-pin
+                n_points = len(sfm_cloud.points)
+                colors = np.ones((n_points, 3)) * [0.70, 0.87, 0.54]  # 鼠尾草绿 (Sage)
+                if sfm_pin_idx is not None and len(sfm_pin_idx) > 0:
+                    colors[sfm_pin_idx] = [0.42, 0.24, 0.60]  # 深紫 (Purple)
+                sfm_cloud.colors = o3d.utility.Vector3dVector(colors)
+
+            cloud = self._o3d_to_pyvista(sfm_cloud)
             if "RGB" in cloud.array_names:
                 self._plotter_aligned.add_mesh(
                     cloud,
@@ -547,10 +592,18 @@ class Viewer3D(QWidget):
                     render_points_as_spheres=True,
                 )
 
+        # RGBD point cloud (transformed)
         if self._rgbd_pcd_raw is not None:
-            # Apply transformation
-            import copy
             transformed = copy.deepcopy(self._rgbd_pcd_raw)
+            
+            if self._compare_mode:
+                # Compare mode: orange for pin, yellow for non-pin
+                n_points = len(transformed.points)
+                colors = np.ones((n_points, 3)) * [0.99, 0.75, 0.44]  # 沙橙色 (Sandy Orange)
+                if rgbd_pin_idx is not None and len(rgbd_pin_idx) > 0:
+                    colors[rgbd_pin_idx] = [0.89, 0.10, 0.11]  # 深红 (Dark Red)
+                transformed.colors = o3d.utility.Vector3dVector(colors)
+
             transformed.transform(self._transform)
             cloud = self._o3d_to_pyvista(transformed)
 

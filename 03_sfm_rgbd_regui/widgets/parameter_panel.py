@@ -67,6 +67,7 @@ class ParameterPanel(QWidget):
 
     params_changed = Signal(object)  # AlignmentParams
     sfm_pin_params_changed = Signal(object)  # SfMPinParams
+    compare_mode_changed = Signal(bool)  # Compare Mode toggle
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         """Initialize the parameter panel."""
@@ -220,6 +221,14 @@ class ParameterPanel(QWidget):
 
         icp_layout.addRow("Geometry Weight:", weight_widget)
 
+        # Compare Mode checkbox
+        self._chk_compare_mode = QCheckBox("Compare Mode")
+        self._chk_compare_mode.setChecked(False)
+        self._chk_compare_mode.setToolTip(
+            "Colorize clouds: SfM (red tones), RGBD (yellow/orange tones)"
+        )
+        icp_layout.addRow("", self._chk_compare_mode)
+
         layout.addWidget(icp_group)
         
         # Transform Matrix Table
@@ -315,6 +324,9 @@ class ParameterPanel(QWidget):
         self._spin_icp_iter.editingFinished.connect(self._emit_params_now)
         self._slider_weight.sliderReleased.connect(self._emit_params_now)
 
+        # Compare Mode checkbox - immediate signal
+        self._chk_compare_mode.stateChanged.connect(self._on_compare_mode_changed)
+
     @Slot()
     def _on_sfm_param_changed(self) -> None:
         """Handle Step 2 SfM pin parameter changes (debounced)."""
@@ -334,6 +346,16 @@ class ParameterPanel(QWidget):
         self._label_weight.setText(f"{weight:.2f}")
         if not self._updating:
             self._update_timer.start()
+
+    @Slot()
+    def _on_compare_mode_changed(self) -> None:
+        """Handle compare mode checkbox toggle."""
+        if not self._updating:
+            self.compare_mode_changed.emit(self._chk_compare_mode.isChecked())
+
+    def is_compare_mode(self) -> bool:
+        """Return the current compare mode state."""
+        return self._chk_compare_mode.isChecked()
 
     @Slot()
     def _emit_sfm_pin_params_now(self) -> None:
