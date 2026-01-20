@@ -81,6 +81,7 @@ class MainWindow(QMainWindow):
         self._current_result = None
         self._is_dirty: bool = False
         self._manual_specified_angles: list[int] = []  # Manual rotation angles
+        self._current_selected_angle: Optional[int] = None  # Track actively selected angle
         self._settings = QSettings("PotatoScan", "RegistrationGUI")
 
         self._setup_ui()
@@ -402,6 +403,7 @@ class MainWindow(QMainWindow):
 
         self._current_pid = pid
         self._manual_specified_angles = []  # Clear manual angles for new item
+        self._current_selected_angle = None  # Reset selected angle
 
         # Reset ALL Steps (2, 3, 4) for new item
         self._param_panel.reset_all_steps()
@@ -631,6 +633,11 @@ class MainWindow(QMainWindow):
                 selected_peak=None,  # Auto-select best initially
             )
             
+            # Default to auto-selected angle
+            curr_idx = self._current_result.selected_peak_idx
+            if 0 <= curr_idx < len(self._current_result.peak_angles):
+                self._current_selected_angle = self._current_result.peak_angles[curr_idx]
+            
             # If a specific angle was requested, find its index and recompute
             if selected_peak_angle is not None:
                 peak_angles = self._current_result.peak_angles
@@ -649,6 +656,7 @@ class MainWindow(QMainWindow):
                         self._current_rgbd,
                         self._current_sfm,
                     )
+                    self._current_selected_angle = selected_peak_angle
                 elif selected_peak_angle in self._manual_specified_angles:
                     # Manual angle - compute alignment using direct angle index
                     logger.info(
@@ -657,6 +665,7 @@ class MainWindow(QMainWindow):
                     self._current_result = self._recompute_with_manual_angle(
                         selected_peak_angle
                     )
+                    self._current_selected_angle = selected_peak_angle
                 else:
                     logger.warning(
                         f"Could not find peak angle {selected_peak_angle}° in computed peaks. "
@@ -871,11 +880,7 @@ class MainWindow(QMainWindow):
         if self._aligner is not None:
             self._aligner.update_params(params)
             # Preserve current selected peak angle
-            current_peak_idx = self._current_result.selected_peak_idx
-            if 0 <= current_peak_idx < len(self._current_result.peak_angles):
-                current_angle = self._current_result.peak_angles[current_peak_idx]
-            else:
-                current_angle = None
+            current_angle = self._current_selected_angle
             self._run_alignment(selected_peak_angle=current_angle, is_dirty=True)
 
     @Slot(object)
@@ -971,23 +976,52 @@ class MainWindow(QMainWindow):
 
     @Slot(int)
     def _on_peak_changed(self, peak_idx: int) -> None:
-        """Handle peak selection change."""
+        """Handle peak selection change from chart navigation."""
         if self._aligner is None or self._current_rgbd is None:
             return
 
-        self._current_result = self._aligner.recompute_with_peak(
-            peak_idx,
-            self._current_rgbd,
-            self._current_sfm,
-        )
-        self._viewer.set_transform(self._current_result.transform_matrix)
-        if 0 <= peak_idx < len(self._current_result.peak_angles):
-            angle = self._current_result.peak_angles[peak_idx]
-            peak_info = f", (Peak {peak_idx}: {angle}°)"
+        # Get merged peak list (auto + manual) from chart
+        chart_peaks = self._rmse_chart._peaks
+        angles, _ = self._current_result.rmse_curve
+        
+        # Determine if this is a manual peak or auto peak
+        if 0 <= peak_idx < len(chart_peaks):
+            angle_idx = chart_peaks[peak_idx]
+            selected_angle = int(angles[angle_idx])
+            
+            # Update the tracked selected angle
+            self._current_selected_angle = selected_angle
+            
+            # Check if it's a manual angle
+            if selected_angle in self._manual_specified_angles:
+                # Manual angle - recompute using manual angle logic
+                self._current_result = self._recompute_with_manual_angle(
+                    float(selected_angle)
+                )
+            else:
+                # Auto-detected peak - use standard recompute
+                # Find the index in auto-detected peaks
+                peak_angles = self._current_result.peak_angles
+                matching = np.where(np.isclose(peak_angles, selected_angle))[0]
+                if len(matching) > 0:
+                    auto_peak_idx = int(matching[0])
+                    self._current_result = self._aligner.recompute_with_peak(
+                        auto_peak_idx,
+                        self._current_rgbd,
+                        self._current_sfm,
+                    )
+                else:
+                    # Fallback: use the angle index directly
+                    self._current_result = self._recompute_with_manual_angle(
+                        float(selected_angle)
+                    )
+            
+            peak_info = f", (Peak {peak_idx}: {selected_angle}°)"
         else:
-            angle = "N/A"
+            selected_angle = None
             peak_info = ""
 
+        self._viewer.set_transform(self._current_result.transform_matrix)
         self._status_bar.showMessage(
             f"{self._current_pid}: RMSE={self._current_result.rmse:.6f}{peak_info}"
         )

@@ -274,3 +274,69 @@ else:
 - ✅ 手动角度正确计算对齐
 - ✅ 3D viewer 立即更新显示正确的变换
 - ✅ 无需手动 prev/next peak 切换
+
+---
+
+## 追加修复: 修改参数重置手动角度问题 (16:04)
+
+### 问题描述
+手动设置过 angle 后，修改 Step 4 iteration 等参数会导致 alignment 重置为自动选择的 peak，而不是保持当前的手动角度。
+
+### 原因
+`_on_params_changed` 方法只检查 `self._current_result.peak_angles`（自动检测的 peaks），如果不匹配（手动角度索引超出范围），则强制重置为 `None`（自动选择最佳 peak）。
+
+### 解决方案
+
+引入 `self._current_selected_angle` 变量 explicitly 追踪当前激活的角度（无论是自动还是手动）。
+
+1. **`__init__`**: 初始化 `self._current_selected_angle = None`
+2. **`_run_alignment`**:
+   - 默认设置为自动选择的最佳 peak angle
+   - 如果成功应用了 `selected_peak_angle`（无论是自动还是手动），则更新 `self._current_selected_angle` 为该值
+3. **`_on_params_changed`**:
+   - 使用 `self._current_selected_angle` 而不是从 `selected_peak_idx` 推导
+4. **`_on_item_selected`**: 重置 `self._current_selected_angle = None`
+
+### 结果
+- ✅ 修改参数时保持当前选中的手动角度
+- ✅ 切换 Item 时正确重置状态
+
+---
+
+## UI 改进: Chart Legend for Manual Peak (16:17)
+
+### 需求
+当选取了 manual 设置的 angle 时，Legend 中应保留 manual 的说明。
+
+### 修改
+已在 `widgets/rmse_chart.py` 更新逻辑：
+如果当前选中的 peak 是 manual 类型，Legend 标签显示为 **"Current (Manual)"**，且保持虚线样式。
+
+```python
+label="Current (Manual)" if is_manual else "Current"
+```
+
+---
+
+## 追加修复: Prev/Next Peak 导航后参数更新问题 (16:47)
+
+### 问题描述
+上一个修复引入了新 bug：当没有手动角度时，使用 Prev/Next Peak 按钮切换 peak 后，修改参数（如 iteration）会导致 peak 重置回初始自动选择的 peak。
+
+### 原因分析
+`_on_peak_changed` 方法（处理 Prev/Next Peak 按钮点击）没有更新 `_current_selected_angle`，导致：
+1. 加载 item → `_current_selected_angle = 50°`（自动选择）
+2. 点击 "Next Peak" → 切换到 140°，但 `_current_selected_angle` 仍然是 50°
+3. 修改参数 → 使用 `_current_selected_angle`（50°）→ 重置回 50°
+
+### 解决方案
+重写 `_on_peak_changed` 方法：
+1. 从 chart 获取合并后的 peak 列表（包含 auto + manual）
+2. 根据 peak_idx 获取实际角度值
+3. **更新 `_current_selected_angle`**
+4. 根据是 manual 还是 auto peak，调用相应的重计算方法
+
+### 结果
+- ✅ Prev/Next Peak 按钮正确更新 `_current_selected_angle`
+- ✅ 修改参数后保持当前导航到的 peak
+- ✅ 支持 auto 和 manual peaks

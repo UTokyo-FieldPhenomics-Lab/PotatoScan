@@ -177,7 +177,7 @@ class RmseChartWidget(QWidget):
                     color="red",
                     linewidth=2,
                     linestyle=linestyle,
-                    label="Current",
+                    label="Current (Manual)" if is_manual else "Current",
                 )
             elif is_manual:
                 # Manual peak - orange dashed
