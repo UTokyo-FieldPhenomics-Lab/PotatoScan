@@ -671,6 +671,22 @@ class Viewer3D(QWidget):
                 color="red",
                 point_size=5
              )
+
+        # Show DBSCAN outliers in orange (if any)
+        dbscan_outlier_idx = self._sfm_pin_data.get('dbscan_outlier_idx')
+        sfm_pcd_full = self._sfm_pin_data.get('pcd')
+        if (
+            dbscan_outlier_idx is not None 
+            and len(dbscan_outlier_idx) > 0 
+            and sfm_pcd_full is not None
+        ):
+            outlier_pcd = sfm_pcd_full.select_by_index(dbscan_outlier_idx)
+            outlier_pcd.paint_uniform_color([1.0, 0.65, 0.0])  # Orange #FFA500
+            self._add_mesh_to_plotter(
+                self._plotter_sfm_pin,
+                outlier_pcd,
+                point_size=5,
+            )
              
         self._plotter_sfm_pin.reset_camera()
 

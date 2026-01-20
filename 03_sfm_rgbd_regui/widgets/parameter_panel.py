@@ -446,7 +446,9 @@ class ParameterPanel(QWidget):
         finally:
             self._updating = False
 
-    def set_current_threshold(self, value: float) -> None:
+    def set_current_threshold(
+        self, value: float, dbscan_activated: bool = False
+    ) -> None:
         """
         Update the current threshold display label.
 
@@ -457,8 +459,11 @@ class ParameterPanel(QWidget):
         ----------
         value : float
             Current threshold value being used.
+        dbscan_activated : bool
+            Whether DBSCAN clustering was activated.
         """
-        self._lbl_current_thresh.setText(f"{value:.2f}")
+        suffix = " (DBSCAN activated)" if dbscan_activated else ""
+        self._lbl_current_thresh.setText(f"{value:.2f}{suffix}")
 
     def set_auto_iteration(self, enabled: bool) -> None:
         """
@@ -502,3 +507,35 @@ class ParameterPanel(QWidget):
         finally:
             self._updating = False
 
+    def reset_all_steps(self) -> None:
+        """
+        Reset Step 2, Step 3, and Step 4 parameters to defaults.
+
+        Called when loading a new item to ensure completely fresh state.
+        """
+        self._updating = True
+        try:
+            # Reset Step 2: SfM Pin Segmentation
+            defaults_sfm = self.DEFAULT_SFM_PIN_PARAMS
+            self._spin_initial_thresh.setValue(defaults_sfm.initial_threshold)
+            self._spin_hsv_h.setValue(defaults_sfm.hsv_weight_h)
+            self._spin_hsv_s.setValue(defaults_sfm.hsv_weight_s)
+            self._spin_hsv_v.setValue(defaults_sfm.hsv_weight_v)
+            self._spin_hull_volume.setValue(defaults_sfm.target_hull_volume)
+            self._chk_auto_iter.setChecked(defaults_sfm.auto_iteration)
+            self._lbl_current_thresh.setText(
+                f"{defaults_sfm.initial_threshold:.2f}"
+            )
+
+            # Reset Step 3: Pin Neighbor
+            defaults_align = self.DEFAULT_PARAMS
+            self._spin_search_radius.setValue(defaults_align.search_radius)
+            self._spin_cross_buffer.setValue(defaults_align.cross_buffer)
+
+            # Reset Step 4: ICP Refinement
+            self._spin_icp_threshold.setValue(defaults_align.icp_threshold)
+            self._spin_icp_iter.setValue(defaults_align.icp_iter_num)
+            self._slider_weight.setValue(int(defaults_align.geometry_weight * 100))
+            self._label_weight.setText(f"{defaults_align.geometry_weight:.2f}")
+        finally:
+            self._updating = False

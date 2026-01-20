@@ -27,6 +27,9 @@ import warnings
 
 from loguru import logger
 
+# DBSCAN clustering for outlier removal
+from sklearn.cluster import DBSCAN
+
 
 class InsufficientPinPointsError(Exception):
     """
@@ -905,6 +908,85 @@ class SfMPinFetcher():
             hull_volume = pin_hull.get_volume() * 1000 ** 3  # mm3
             return hull_volume
 
+    @staticmethod
+    def dbscan_denoise(pin_pcd, eps: float = 0.005, min_samples: int = 3):
+        """
+        Apply DBSCAN clustering to remove distant outlier points.
+
+        Parameters
+        ----------
+        pin_pcd : o3d.geometry.PointCloud
+            Input point cloud of pin region.
+        eps : float
+            DBSCAN neighborhood radius.
+        min_samples : int
+            Minimum points to form a cluster.
+
+        Returns
+        -------
+        tuple
+            (kept_pcd, kept_indices, outlier_indices, dbscan_activated)
+            - kept_pcd: Point cloud with only the largest cluster
+            - kept_indices: Indices of kept points in original array
+            - outlier_indices: Indices of removed outlier points
+            - dbscan_activated: True if DBSCAN was actually used
+        """
+        points = np.asarray(pin_pcd.points)
+        n_points = len(points)
+
+        if n_points < 4:
+            # Not enough points for clustering
+            return pin_pcd, np.arange(n_points), np.array([], dtype=int), False
+
+        # Run DBSCAN clustering
+        db = DBSCAN(eps=eps, min_samples=min_samples).fit(points)
+        labels = db.labels_
+
+        # Get unique cluster labels (excluding noise label -1)
+        unique_labels = set(labels)
+        cluster_labels = unique_labels - {-1}
+
+        if len(cluster_labels) <= 1:
+            # Only one cluster (or no clusters) - no outliers to remove
+            # Keep all non-noise points
+            kept_mask = labels != -1 if -1 in unique_labels else np.ones(n_points, dtype=bool)
+            kept_indices = np.where(kept_mask)[0]
+            outlier_indices = np.where(~kept_mask)[0]
+            return (
+                pin_pcd.select_by_index(kept_indices),
+                kept_indices,
+                outlier_indices,
+                False,
+            )
+
+        # Multiple clusters detected - find largest and remove others
+        logger.info(f"DBSCAN found {len(cluster_labels)} clusters + noise")
+
+        # Calculate cluster sizes and find largest
+        cluster_sizes = {
+            label: np.sum(labels == label) for label in cluster_labels
+        }
+        largest_label = max(cluster_sizes, key=cluster_sizes.get)
+
+        logger.debug(f"Cluster sizes: {cluster_sizes}, keeping cluster {largest_label}")
+
+        # Keep only largest cluster
+        kept_mask = labels == largest_label
+        kept_indices = np.where(kept_mask)[0]
+        outlier_indices = np.where(~kept_mask)[0]
+
+        logger.info(
+            f"DBSCAN: kept {len(kept_indices)} points, "
+            f"removed {len(outlier_indices)} outliers"
+        )
+
+        return (
+            pin_pcd.select_by_index(kept_indices),
+            kept_indices,
+            outlier_indices,
+            True,
+        )
+
     def iter_hull_volume_by_thresh(self, sfm_pcd, color_distance_norm, thresh):
 
         pin_idx = np.where(color_distance_norm < thresh)[0]
@@ -1015,9 +1097,11 @@ class SfMPinFetcher():
                 status_callback(msg)
 
         # Helper to update threshold in UI
-        def _update_threshold(current_thresh: float) -> None:
+        def _update_threshold(
+            current_thresh: float, dbscan_activated: bool = False
+        ) -> None:
             if threshold_callback is not None:
-                threshold_callback(current_thresh)
+                threshold_callback(current_thresh, dbscan_activated)
 
         _update_status("Iterative pin segmentation of SfM point clouds...")
 
@@ -1046,6 +1130,10 @@ class SfMPinFetcher():
                     f"Only {len(pin_idx)} pin points found at thresh={thresh:.2f}"
                 )
 
+        # Track DBSCAN results
+        dbscan_outlier_idx = np.array([], dtype=int)
+        dbscan_activated = False
+
         # Iterative denoise loop (only if auto_iteration is enabled)
         if auto_iteration:
             while hull_volume > target_hull_volume:
@@ -1058,7 +1146,7 @@ class SfMPinFetcher():
                         f"({pin_pcd_num} pts) - too large, reducing threshold"
                     )
                     _update_status(msg)
-                    keeped, keeped_idx = pin_pcd, pin_idx
+                    keeped, keeped_idx = pin_pcd, np.arange(pin_pcd_num)
                 else:
                     msg = (
                         f"Thresh={thresh:.2f}: hull={hull_volume:.1f}mm³ "
@@ -1071,9 +1159,45 @@ class SfMPinFetcher():
 
                 denoised_volume = self.get_hull_volume(keeped)
 
+                # If still too large after radius outlier, try DBSCAN
+                if denoised_volume > target_hull_volume and len(keeped.points) > 4:
+                    msg = (
+                        f"Thresh={thresh:.2f}: hull={denoised_volume:.1f}mm³ "
+                        f"still large, trying DBSCAN..."
+                    )
+                    _update_status(msg)
+
+                    (
+                        dbscan_keeped,
+                        dbscan_kept_idx,
+                        dbscan_removed_idx,
+                        was_activated,
+                    ) = self.dbscan_denoise(keeped, eps=0.008, min_samples=3)
+
+                    if was_activated:
+                        dbscan_activated = True
+                        # Ensure keeped_idx is a numpy array for indexing
+                        keeped_idx_arr = np.asarray(keeped_idx)
+                        
+                        # Map outlier indices back to original sfm_pcd indices
+                        local_removed_idx = keeped_idx_arr[dbscan_removed_idx]
+                        dbscan_outlier_idx = np.concatenate([
+                            dbscan_outlier_idx,
+                            pin_idx[local_removed_idx],
+                        ]).astype(int)
+
+                        # Update keeped to use DBSCAN result
+                        keeped = dbscan_keeped
+                        keeped_idx = keeped_idx_arr[dbscan_kept_idx]
+                        denoised_volume = self.get_hull_volume(keeped)
+
+                        logger.info(
+                            f"DBSCAN reduced hull to {denoised_volume:.1f}mm³"
+                        )
+
                 if denoised_volume > target_hull_volume:
                     thresh -= 0.05
-                    _update_threshold(thresh)
+                    _update_threshold(thresh, dbscan_activated)
 
                     if thresh < 0:
                         raise InsufficientPinPointsError(
@@ -1098,12 +1222,13 @@ class SfMPinFetcher():
                 else:
                     hull_volume = denoised_volume
                     pin_idx = pin_idx[keeped_idx]
+                    suffix = " (DBSCAN)" if dbscan_activated else ""
                     msg = (
                         f"Pin segmentation complete: thresh={thresh:.2f}, "
-                        f"hull={hull_volume:.2f}mm³ (denoised)"
+                        f"hull={hull_volume:.2f}mm³{suffix}"
                     )
                     _update_status(msg)
-                    _update_threshold(thresh)
+                    _update_threshold(thresh, dbscan_activated)
                     break
             else:
                 # Loop finished without break (hull was already small enough)
@@ -1112,7 +1237,7 @@ class SfMPinFetcher():
                     f"hull={hull_volume:.2f}mm³"
                 )
                 _update_status(msg)
-                _update_threshold(thresh)
+                _update_threshold(thresh, dbscan_activated)
         else:
             # Preview mode - no iteration, just use initial threshold
             msg = (
@@ -1120,15 +1245,17 @@ class SfMPinFetcher():
                 f"hull={hull_volume:.2f}mm³ ({len(pin_idx)} pts)"
             )
             _update_status(msg)
-            _update_threshold(thresh)
+            _update_threshold(thresh, dbscan_activated)
 
         results_container = {
             "pin_idx": pin_idx,
             "pcd": sfm_pcd,
-            "pcd_rela_path": f"2_sfm/1_mesh/{potato_id}/{potato_id}.obj" ,
+            "pcd_rela_path": f"2_sfm/1_mesh/{potato_id}/{potato_id}.obj",
             "stop_thresh": thresh,
             "stop_hull_volume": hull_volume,
             "hsv_weight": HSV_WEIGHT,
+            "dbscan_outlier_idx": dbscan_outlier_idx,
+            "dbscan_activated": dbscan_activated,
         }
 
         if visualize or show:

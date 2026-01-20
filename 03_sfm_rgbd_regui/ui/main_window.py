@@ -397,9 +397,12 @@ class MainWindow(QMainWindow):
         self._current_pid = pid
         self._manual_specified_angles = []  # Clear manual angles for new item
 
-        # Reset Step 2 (SfM Pin) and Step 3 (Pin Neighbor) params for new item
-        # Preserves Step 4 (ICP) params
-        self._param_panel.reset_step2_and_step3()
+        # Reset ALL Steps (2, 3, 4) for new item
+        self._param_panel.reset_all_steps()
+
+        # Clear viewer and chart for fresh state
+        self._viewer.clear()
+        self._rmse_chart.clear()
 
         self._status_bar.showMessage(f"Loading {pid}...")
         QApplication.processEvents()
@@ -746,7 +749,9 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage(message)
         QApplication.processEvents()
 
-    def _on_threshold_update(self, threshold: float) -> None:
+    def _on_threshold_update(
+        self, threshold: float, dbscan_activated: bool = False
+    ) -> None:
         """
         Handle threshold updates during iterative pin segmentation.
 
@@ -757,8 +762,10 @@ class MainWindow(QMainWindow):
         ----------
         threshold : float
             Current threshold value being used.
+        dbscan_activated : bool
+            Whether DBSCAN clustering was activated.
         """
-        self._param_panel.set_current_threshold(threshold)
+        self._param_panel.set_current_threshold(threshold, dbscan_activated)
         QApplication.processEvents()
 
     @Slot(object)
