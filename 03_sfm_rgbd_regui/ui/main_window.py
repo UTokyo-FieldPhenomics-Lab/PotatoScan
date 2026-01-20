@@ -634,19 +634,28 @@ class MainWindow(QMainWindow):
             # If a specific angle was requested, find its index and recompute
             if selected_peak_angle is not None:
                 peak_angles = self._current_result.peak_angles
-                # Find the index of the requested angle
+                # Find the index of the requested angle in auto-detected peaks
                 matching_indices = np.where(np.isclose(peak_angles, selected_peak_angle))[0]
+                
                 if len(matching_indices) > 0:
+                    # Found in auto-detected peaks
                     target_peak_idx = int(matching_indices[0])
                     logger.info(
                         f"Found matching peak at index {target_peak_idx} "
                         f"for angle {selected_peak_angle}°"
                     )
-                    # Recompute with the correct peak
                     self._current_result = self._aligner.recompute_with_peak(
                         target_peak_idx,
                         self._current_rgbd,
                         self._current_sfm,
+                    )
+                elif selected_peak_angle in self._manual_specified_angles:
+                    # Manual angle - compute alignment using direct angle index
+                    logger.info(
+                        f"Computing alignment for manual angle {selected_peak_angle}°"
+                    )
+                    self._current_result = self._recompute_with_manual_angle(
+                        selected_peak_angle
                     )
                 else:
                     logger.warning(
@@ -677,13 +686,24 @@ class MainWindow(QMainWindow):
                 if 0 <= idx < len(angles):
                     peak_indices.append(idx)
             
-            # Merge manual specified angles into peaks
-            manual_potential_indices = []
+            # Merge manual specified angles into peaks and sort by angle
+            # First, collect manual peak indices
+            manual_angle_indices = []
             for ma in self._manual_specified_angles:
                 manual_idx = int(ma / 10) - 1
                 if 0 <= manual_idx < len(angles) and manual_idx not in peak_indices:
                     peak_indices.append(manual_idx)
-                    manual_potential_indices.append(len(peak_indices) - 1)
+                    manual_angle_indices.append(manual_idx)
+            
+            # Sort peak_indices by corresponding angle values
+            peak_indices.sort(key=lambda idx: angles[idx])
+            
+            # Rebuild manual_potential_indices after sorting
+            # Find where manual peaks ended up in the sorted list
+            manual_potential_indices = []
+            for i, peak_idx in enumerate(peak_indices):
+                if peak_idx in manual_angle_indices:
+                    manual_potential_indices.append(i)
             
             # Store manual indices in result for saving
             self._current_result.manual_potential_indices = manual_potential_indices
@@ -695,13 +715,13 @@ class MainWindow(QMainWindow):
                     manual_peak_flags[mi] = True
             
             # Determine the correct selected peak index for chart
-            # Check if the selected angle is a manual peak
             chart_selected_idx = self._current_result.selected_peak_idx
             
-            if selected_peak_angle is not None and selected_peak_angle in self._manual_specified_angles:
-                # Manual peak - find its position in the merged peak_indices list
-                for i, peak_i in enumerate(peak_indices):
-                    if np.isclose(angles[peak_i], selected_peak_angle):
+            # If a specific angle was selected, find its index in the sorted list
+            if selected_peak_angle is not None:
+                target_idx = int(selected_peak_angle / 10) - 1
+                for i, peak_idx in enumerate(peak_indices):
+                    if peak_idx == target_idx:
                         chart_selected_idx = i
                         break
                     
@@ -757,6 +777,70 @@ class MainWindow(QMainWindow):
         """
         self._status_bar.showMessage(message)
         QApplication.processEvents()
+
+    def _recompute_with_manual_angle(self, angle: float):
+        """
+        Compute alignment for a manually specified angle.
+
+        Uses the cached NUV matrices to compute alignment for an angle
+        that may not be in the auto-detected peaks list.
+
+        Parameters
+        ----------
+        angle : float
+            The rotation angle in degrees.
+
+        Returns
+        -------
+        AlignmentResult
+            Updated alignment result for the specified angle.
+        """
+        import copy
+        from utils import linear_algebra as util_la
+        from core.alignment import AlignmentResult
+
+        last = self._current_result
+        angles, rmses = last.rmse_curve
+
+        # Find the index for this angle in the NUV matrices
+        angle_idx = int(angle / 10) - 1
+        if angle_idx < 0 or angle_idx >= len(last.nuv_matrices):
+            logger.warning(f"Invalid angle index {angle_idx} for angle {angle}°")
+            return last
+
+        nuv_matrix = last.nuv_matrices[angle_idx]
+
+        # Recompute rough alignment
+        imatrix = self._aligner.compute_rough_alignment(
+            last.rgbd_pin_data,
+            last.sfm_pin_data,
+        )
+        iimatrix = nuv_matrix @ imatrix
+
+        # Recompute ICP
+        tmatrix, o3d_rmse = self._aligner.compute_icp_refinement(
+            self._current_rgbd, self._current_sfm, iimatrix
+        )
+
+        source_pcd = copy.deepcopy(self._current_rgbd["pcd"]).transform(tmatrix)
+        rmse = util_la.compute_distance_rmse(source_pcd, self._current_sfm["pcd"])
+
+        # Find the corresponding selected_peak_idx in the result
+        # This is used for display purposes
+        selected_peak_idx = last.selected_peak_idx
+
+        return AlignmentResult(
+            transform_matrix=tmatrix,
+            rmse=rmse,
+            open3d_rmse=o3d_rmse,
+            peak_angles=last.peak_angles,
+            rmse_curve=last.rmse_curve,
+            selected_peak_idx=selected_peak_idx,
+            sfm_pin_data=last.sfm_pin_data,
+            rgbd_pin_data=last.rgbd_pin_data,
+            nuv_matrices=last.nuv_matrices,
+            manual_potential_indices=last.manual_potential_indices,
+        )
 
     def _on_threshold_update(
         self, threshold: float, dbscan_activated: bool = False
@@ -1127,12 +1211,8 @@ class MainWindow(QMainWindow):
         self._manual_specified_angles.append(angle)
         logger.info(f"Added manual angle: {angle}°")
 
-        # Calculate the new peak index for the manually added angle
-        # Manual angles are appended after auto-detected peaks
-        new_peak_idx = len(self._current_result.peak_angles) + \
-            len(self._manual_specified_angles) - 1
-
         # Re-run alignment with the new angle selected
+        # The angle will be inserted in sorted order and selected correctly
         self._run_alignment(
             selected_peak_angle=float(angle),
             is_dirty=True,

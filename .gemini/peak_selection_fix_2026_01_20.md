@@ -169,3 +169,108 @@ self._status_bar.showMessage(
 2. **UnboundLocalError: 'selected_peak_angle' not defined**
    - 原因: 当没有 output JSON 文件时，`selected_peak_angle` 从未被定义
    - 解决: 在 `if output_path.exists()` 之前初始化 `selected_peak_angle = None`
+
+---
+
+## 追加修复: 手动角度插入后排序问题 (15:48)
+
+### 问题描述
+手动添加 rotation angle 后，由于角度被 append 到列表末尾，导致 "Prev Peak" 和 "Next Peak" 按钮按列表顺序而非角度顺序导航。
+
+**例如**:
+- 自动检测的 peaks: `[50, 140, 220]`
+- 手动添加角度 `100°` 后: `[50, 140, 220, 100]`（错误顺序）
+- 点击 "Next Peak" 会从 220° 跳到 100°，而不是按 50→100→140→220 的顺序
+
+### 解决方案
+
+**文件**: `ui/main_window.py`
+
+**修改 `_run_alignment` 中的手动角度合并逻辑**:
+
+```python
+# 1. 收集手动角度对应的索引
+manual_angle_indices = []
+for ma in self._manual_specified_angles:
+    manual_idx = int(ma / 10) - 1
+    if 0 <= manual_idx < len(angles) and manual_idx not in peak_indices:
+        peak_indices.append(manual_idx)
+        manual_angle_indices.append(manual_idx)
+
+# 2. 按角度值排序
+peak_indices.sort(key=lambda idx: angles[idx])
+
+# 3. 重建手动 peak 的索引（在排序后的列表中的位置）
+manual_potential_indices = []
+for i, peak_idx in enumerate(peak_indices):
+    if peak_idx in manual_angle_indices:
+        manual_potential_indices.append(i)
+
+# 4. 查找选中角度在排序后列表中的索引
+if selected_peak_angle is not None:
+    target_idx = int(selected_peak_angle / 10) - 1
+    for i, peak_idx in enumerate(peak_indices):
+        if peak_idx == target_idx:
+            chart_selected_idx = i
+            break
+```
+
+**修改 `_on_manual_angle_specify`**:
+- 移除了旧的 `new_peak_idx` 计算逻辑（不再需要，因为 `_run_alignment` 会自动处理排序和选择）
+
+### 结果
+- ✅ 手动添加的角度会被插入到正确的排序位置
+- ✅ "Next/Prev Peak" 始终按角度顺序导航
+- ✅ 手动添加后自动跳转到该角度
+
+---
+
+## 追加修复: 手动角度对齐计算问题 (15:53)
+
+### 问题描述
+手动设定完 rotation angle 点击确定后，RMSE Analysis 页面的图更新了，但 Tab4 Aligned 的 3D viewer 没有发生变化（需要手动 prev peak + next peak 两次切换才能正确显示）。
+
+**原因**: 手动角度不在 `peak_angles`（自动检测的 peaks）中，所以 `_run_alignment` 中的 `matching_indices` 为空，导致 fallback 到自动选择的最佳 peak，而不是使用手动指定的角度计算对齐。
+
+### 解决方案
+
+**添加 `_recompute_with_manual_angle` 方法**:
+
+```python
+def _recompute_with_manual_angle(self, angle: float):
+    """
+    Compute alignment for a manually specified angle.
+    Uses the cached NUV matrices to compute alignment for an angle
+    that may not be in the auto-detected peaks list.
+    """
+    last = self._current_result
+    
+    # Find the index for this angle in the NUV matrices
+    angle_idx = int(angle / 10) - 1
+    nuv_matrix = last.nuv_matrices[angle_idx]
+
+    # Recompute rough alignment + ICP
+    imatrix = self._aligner.compute_rough_alignment(...)
+    iimatrix = nuv_matrix @ imatrix
+    tmatrix, o3d_rmse = self._aligner.compute_icp_refinement(...)
+    
+    return AlignmentResult(transform_matrix=tmatrix, ...)
+```
+
+**修改 `_run_alignment` 逻辑**:
+```python
+if len(matching_indices) > 0:
+    # 在自动检测的 peaks 中找到匹配
+    self._current_result = self._aligner.recompute_with_peak(...)
+elif selected_peak_angle in self._manual_specified_angles:
+    # 手动角度 - 使用直接角度索引计算
+    self._current_result = self._recompute_with_manual_angle(selected_peak_angle)
+else:
+    # 警告并使用自动选择
+    logger.warning(...)
+```
+
+### 结果
+- ✅ 手动角度正确计算对齐
+- ✅ 3D viewer 立即更新显示正确的变换
+- ✅ 无需手动 prev/next peak 切换
