@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+
 from PySide6.QtCore import Qt, Slot, QSettings
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -470,7 +472,7 @@ class MainWindow(QMainWindow):
 
             # Check for existing result and load parameters
             output_path = self._loader.get_output_path(pid)
-            selected_peak_idx = None
+            selected_peak_angle = None  # Default to auto-select best peak
             
             if output_path.exists():
                 try:
@@ -493,17 +495,28 @@ class MainWindow(QMainWindow):
                     self._param_panel.set_params(saved_params)
                     self._aligner.update_params(saved_params)
 
-                    # Retrieve selected peak if available
+                    # Retrieve selected peak angle from saved data
+                    # Old format stores index into RMSE-sorted array, so we need the actual angle
                     rms_analysis = meta.get("rms_analysis", {})
-                    selected_peak_idx = rms_analysis.get("selected", 0)
+                    saved_peak_angles = rms_analysis.get("potential_local_minima", [])
+                    saved_selected_idx = rms_analysis.get("selected", 0)
+                    
+                    # Get the actual angle value that was selected
+                    if saved_peak_angles and saved_selected_idx < len(saved_peak_angles):
+                        selected_peak_angle = saved_peak_angles[saved_selected_idx]
+                        logger.info(
+                            f"Restored selected peak angle: {selected_peak_angle}° "
+                            f"(index {saved_selected_idx} in saved file)"
+                        )
+                    else:
+                        selected_peak_angle = None
                     
                     # Restore manual angles from JSON
                     manual_potential = rms_analysis.get("manual_potential", [])
                     if manual_potential:
-                        peak_angles = rms_analysis.get("potential_local_minima", [])
                         self._manual_specified_angles = [
-                            peak_angles[i] for i in manual_potential
-                            if i < len(peak_angles)
+                            saved_peak_angles[i] for i in manual_potential
+                            if i < len(saved_peak_angles)
                         ]
                         logger.info(
                             f"Restored {len(self._manual_specified_angles)} "
@@ -516,9 +529,14 @@ class MainWindow(QMainWindow):
                     
                 except Exception as e:
                     logger.warning(f"Failed to restore parameters from existing result: {e}")
+                    selected_peak_angle = None
 
             # Run alignment (initially clean)
-            self._run_alignment(selected_peak_idx=selected_peak_idx, is_dirty=False)
+            # Pass selected_peak_angle to find correct index after computing new peaks
+            self._run_alignment(
+                selected_peak_angle=selected_peak_angle, 
+                is_dirty=False
+            )
 
         except InsufficientPinPointsError as e:
             # Switch to preview mode - uncheck auto iteration
@@ -564,8 +582,22 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to load {pid}:\n{e}")
             self._status_bar.showMessage(f"Error loading {pid}")
 
-    def _run_alignment(self, selected_peak_idx: Optional[int] = None, is_dirty: bool = True) -> None:
-        """Run the alignment pipeline."""
+    def _run_alignment(
+        self, 
+        selected_peak_angle: Optional[float] = None, 
+        is_dirty: bool = True
+    ) -> None:
+        """
+        Run the alignment pipeline.
+        
+        Parameters
+        ----------
+        selected_peak_angle : float, optional
+            The rotation angle to select. If None, auto-selects the best peak (lowest RMSE).
+            This is used for backward compatibility with old JSON files that store angles.
+        is_dirty : bool
+            Whether to mark the result as modified (unsaved).
+        """
         if self._aligner is None or self._current_rgbd is None:
             logger.warning("Aligner or RGBD data missing")
             return
@@ -580,11 +612,36 @@ class MainWindow(QMainWindow):
             self._aligner.update_params(params)
             
             logger.info("Computing full alignment...")
+            # First compute with None to get all peaks
             self._current_result = self._aligner.compute_full_alignment(
                 self._current_rgbd,
                 self._current_sfm,
-                selected_peak=selected_peak_idx,
+                selected_peak=None,  # Auto-select best initially
             )
+            
+            # If a specific angle was requested, find its index and recompute
+            if selected_peak_angle is not None:
+                peak_angles = self._current_result.peak_angles
+                # Find the index of the requested angle
+                matching_indices = np.where(np.isclose(peak_angles, selected_peak_angle))[0]
+                if len(matching_indices) > 0:
+                    target_peak_idx = int(matching_indices[0])
+                    logger.info(
+                        f"Found matching peak at index {target_peak_idx} "
+                        f"for angle {selected_peak_angle}°"
+                    )
+                    # Recompute with the correct peak
+                    self._current_result = self._aligner.recompute_with_peak(
+                        target_peak_idx,
+                        self._current_rgbd,
+                        self._current_sfm,
+                    )
+                else:
+                    logger.warning(
+                        f"Could not find peak angle {selected_peak_angle}° in computed peaks. "
+                        f"Available: {peak_angles}. Using auto-selected best peak."
+                    )
+            
             logger.success(f"Alignment complete. RMSE: {self._current_result.rmse}")
 
             # Update views
@@ -609,7 +666,6 @@ class MainWindow(QMainWindow):
                     peak_indices.append(idx)
             
             # Merge manual specified angles into peaks
-            import numpy as np
             manual_potential_indices = []
             for ma in self._manual_specified_angles:
                 manual_idx = int(ma / 10) - 1
@@ -627,14 +683,15 @@ class MainWindow(QMainWindow):
                     manual_peak_flags[mi] = True
             
             # Determine the correct selected peak index for chart
-            # If selected_peak_idx >= auto-detected peak count, it's a manual peak
-            auto_peak_count = len(self._current_result.peak_angles)
-            if selected_peak_idx is not None and selected_peak_idx >= auto_peak_count:
-                # Manual peak - use the index as-is (already correct)
-                chart_selected_idx = selected_peak_idx
-            else:
-                # Auto-detected peak - use result's selected index
-                chart_selected_idx = self._current_result.selected_peak_idx
+            # Check if the selected angle is a manual peak
+            chart_selected_idx = self._current_result.selected_peak_idx
+            
+            if selected_peak_angle is not None and selected_peak_angle in self._manual_specified_angles:
+                # Manual peak - find its position in the merged peak_indices list
+                for i, peak_i in enumerate(peak_indices):
+                    if np.isclose(angles[peak_i], selected_peak_angle):
+                        chart_selected_idx = i
+                        break
                     
             logger.debug(
                 f"Updating chart with {len(angles)} points, "
@@ -713,9 +770,13 @@ class MainWindow(QMainWindow):
         # Recompute ICP with new parameters, preserving current peak selection
         if self._aligner is not None:
             self._aligner.update_params(params)
-            # Preserve current selected peak index
+            # Preserve current selected peak angle
             current_peak_idx = self._current_result.selected_peak_idx
-            self._run_alignment(selected_peak_idx=current_peak_idx, is_dirty=True)
+            if 0 <= current_peak_idx < len(self._current_result.peak_angles):
+                current_angle = self._current_result.peak_angles[current_peak_idx]
+            else:
+                current_angle = None
+            self._run_alignment(selected_peak_angle=current_angle, is_dirty=True)
 
     @Slot(object)
     def _on_sfm_pin_params_changed(self, sfm_params) -> None:
@@ -761,7 +822,7 @@ class MainWindow(QMainWindow):
 
             # Re-run alignment only if auto_iteration is enabled
             if sfm_params.auto_iteration:
-                self._run_alignment(selected_peak_idx=None, is_dirty=True)
+                self._run_alignment(selected_peak_angle=None, is_dirty=True)
             else:
                 # Preview mode - just show visualization
                 self._status_bar.showMessage(
@@ -1057,7 +1118,7 @@ class MainWindow(QMainWindow):
 
         # Re-run alignment with the new angle selected
         self._run_alignment(
-            selected_peak_idx=new_peak_idx,
+            selected_peak_angle=float(angle),
             is_dirty=True,
         )
         self._status_bar.showMessage(
@@ -1082,7 +1143,7 @@ class MainWindow(QMainWindow):
         # Re-run alignment to update chart
         if self._current_result is not None:
             self._run_alignment(
-                selected_peak_idx=0,  # Reset to first auto-detected peak
+                selected_peak_angle=None,  # Auto-select best peak
                 is_dirty=True,
             )
 
