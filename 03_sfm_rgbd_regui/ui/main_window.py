@@ -146,6 +146,7 @@ class MainWindow(QMainWindow):
         tree_layout = QVBoxLayout(tree_group)
         self._file_tree = FileTreeWidget()
         self._file_tree.item_selected.connect(self._on_item_selected)
+        self._file_tree.change_rgbd_requested.connect(self._on_change_rgbd_cloud_requested)
         tree_layout.addWidget(self._file_tree)
         layout.addWidget(tree_group)
 
@@ -239,6 +240,13 @@ class MainWindow(QMainWindow):
         reset_angles_action = QAction("&Reset Manual Angles", self)
         reset_angles_action.triggered.connect(self._on_reset_manual_angles)
         rotation_menu.addAction(reset_angles_action)
+
+        edit_menu.addSeparator()
+
+        change_rgbd_action = QAction("Change &RGBD Point Cloud...", self)
+        change_rgbd_action.setStatusTip("Select a different RGBD point cloud file for the current item")
+        change_rgbd_action.triggered.connect(self._on_change_rgbd_menu_action)
+        edit_menu.addAction(change_rgbd_action)
 
         edit_menu.addSeparator()
 
@@ -353,7 +361,38 @@ class MainWindow(QMainWindow):
         ids = self._loader.get_ids()
         completed = self._loader.get_completed_ids()
         pin_colors = self._loader.get_pin_colors()
-        self._file_tree.set_items(ids, completed, pin_colors)
+        
+        # Get saved metadata for RGBD files
+        saved_meta = self._loader.get_saved_metadata()
+        
+        # Get default files for all IDs
+        defaults = self._loader.get_all_default_images()
+        logger.debug(f"Loaded {len(defaults)} default RGBD files")
+        logger.debug(f"Saved metadata entries: {len(saved_meta)}")
+        
+        # Combine: Start with defaults, override with saved
+        combined_files = defaults.copy()
+        for pid, meta in saved_meta.items():
+            if meta.get('rgbd_filename'):
+                combined_files[pid] = meta['rgbd_filename']
+        
+        self._file_tree.set_items(ids, completed, pin_colors, combined_files)
+        
+        # Now apply manual indicators for saved items
+        # This is efficient enough? Or should we modify set_items?
+        # Iterating set_items is O(N).
+        # We can iterate completed items and check if they differ from default or just trust saved_meta implies manual logic?
+        # Actually, if a result IS saved, we trust that file is the intended one.
+        # Visual indication of "manual" might be useful if it differs from default.
+        # For now, let's just make sure the column is populated.
+        
+        for pid, meta in saved_meta.items():
+            fname = meta.get('rgbd_filename')
+            if fname:
+                # Check if it differs from default
+                default_fname = defaults.get(pid)
+                is_manual = (fname != default_fname)
+                self._file_tree.update_rgbd_file(pid, fname, is_manual=is_manual)
 
     def _check_unsaved_changes(self) -> bool:
         """
@@ -366,6 +405,9 @@ class MainWindow(QMainWindow):
             False if cancelled.
         """
         if not self._is_dirty:
+            return True
+
+        if not self._current_pid:
             return True
 
         reply = QMessageBox.question(
@@ -381,6 +423,188 @@ class MainWindow(QMainWindow):
         elif reply == QMessageBox.Discard:
             return True
         else:
+            return False
+
+    @Slot(str)
+    def _on_change_rgbd_cloud_requested(self, pid: str) -> None:
+        """
+        Handle request to change RGBD cloud for a potato ID.
+        
+        Parameters
+        ----------
+        pid : str
+            Potato ID.
+        """
+        if self._loader is None:
+            return
+            
+        # Get available files
+        available_files = self._loader.get_available_rgbd_files(pid)
+        if not available_files:
+            QMessageBox.warning(self, "No Files", f"No RGBD files found for {pid}")
+            return
+            
+        # Create list of filenames for selection
+        # Format: "filename (pos XX)"
+        items = []
+        file_map = {}
+        current_selection = 0
+        
+        # Check current loaded file to set default selection
+        current_pcd_path = None
+        if  self._current_rgbd and self._current_pid == pid:
+             current_pcd_path = self._current_rgbd.get('pcd_rela_path')
+             # pcd_rela_path: "1_rgbd/2_pcd/2025-015_pcd_365.ply" or similar
+             # We need just the filename part for comparison usually, or careful matching
+             
+        for i, data in enumerate(available_files):
+            fname = data['pcd_filename']
+            pos = data['pos']
+            label = f"{fname} (Pos: {pos})"
+            items.append(label)
+            file_map[label] = fname
+            
+            # Simple matching logic
+            if current_pcd_path and fname in current_pcd_path:
+                current_selection = i
+                
+        # Show dialog
+        item, ok = QInputDialog.getItem(
+            self, 
+            "Select RGBD Point Cloud", 
+            f"Select RGBD point cloud for {pid}:", 
+            items, 
+            current_selection, 
+            False
+        )
+        
+        if ok and item:
+            selected_filename = file_map[item]
+            logger.info(f"User selected RGBD file: {selected_filename} for {pid}")
+            
+            # Save this manually selected file temporarily until actual save
+            # But we should reload immediately
+            
+            # If current item is this PID, reload it
+            if self._current_pid == pid:
+                # We need to reload the item with this specific file
+                # We can call load_rgbd directly then run alignment
+                
+                self._status_bar.showMessage(f"Loading {selected_filename}...")
+                QApplication.processEvents()
+                
+                try:
+                    # Load new RGBD
+                    self._current_rgbd = self._loader.load_rgbd(
+                        pid, 
+                        img_id=selected_filename, 
+                        visualize=True
+                    )
+                     
+                     # Update viewer
+                    self._viewer.set_raw_cloud(
+                        self._current_sfm["pcd"], self._current_rgbd["pcd"]
+                    )
+                    self._viewer.set_rgbd_data(self._current_rgbd)
+                    
+                    # Store info for saving later
+                    # (We rely on _current_rgbd containing the path)
+                    
+                    # Re-run alignment logic (similar to on_item_selected but lighter)
+                    sfm_pin_result = util_pc.find_pin_center(
+                        self._current_sfm['pin_pcd'], self._current_sfm['pcd'], 
+                        circle_color=[0, 0, 0], visualize=True, show=False, label="sfm"
+                    )
+                    rgbd_pin_result = util_pc.find_pin_center(
+                        self._current_rgbd['pin_pcd'], self._current_rgbd['pcd'], 
+                        circle_color=[0, 0, 0], visualize=True, show=False, label="rgbd"
+                    )
+                    
+                    pin_detect_data = {
+                        'sfm_pcd': self._current_sfm['pcd'],
+                        'sfm_pin_pcd': self._current_sfm['pin_pcd'],
+                        'sfm_disk': sfm_pin_result.get('circle_mesh'),
+                        'sfm_arrow': sfm_pin_result.get('vector_arrow'),
+                        'rgbd_pcd': self._current_rgbd['pcd'],
+                        'rgbd_pin_pcd': self._current_rgbd['pin_pcd'],
+                        'rgbd_disk': rgbd_pin_result.get('circle_mesh'),
+                        'rgbd_arrow': rgbd_pin_result.get('vector_arrow'),
+                    }
+                    self._viewer.set_pin_detection_data(pin_detect_data)
+                    
+                    # Re-run alignment
+                    self._run_alignment(selected_peak_angle=self._current_selected_angle, is_dirty=True)
+                    
+                    # Valid manual selection - check if different from default
+                    defaults = self._loader.get_all_default_images()
+                    default_filename = defaults.get(pid)
+                    is_manual = (selected_filename != default_filename)
+                    
+                    self._file_tree.update_rgbd_file(pid, selected_filename, is_manual=is_manual)
+                    
+                except Exception as e:
+                    logger.exception("Failed to load selected RGBD file")
+                    QMessageBox.critical(self, "Error", f"Failed to load {selected_filename}:\n{e}")
+
+    @Slot()
+    def _on_change_rgbd_menu_action(self) -> None:
+        """Handle Change RGBD Point Cloud action from main menu."""
+        if not self._current_pid:
+            QMessageBox.information(self, "No Selection", "Please select an item first.")
+            return
+        self._on_change_rgbd_cloud_requested(self._current_pid)
+
+    def _save_result(self) -> bool:
+        """
+        Save the current alignment result to JSON.
+
+        Returns
+        -------
+        bool
+            True if successful.
+        """
+        if self._current_result is None or self._current_pid is None:
+            return False
+
+        try:
+            output_path = self._loader.get_output_path(self._current_pid)
+            
+            # Extract paths
+            rgbd_pcd_file = self._current_rgbd.get("pcd_rela_path", "")
+            sfm_mesh_file = self._current_sfm.get("pcd_rela_path", "").replace("2_pcd", "1_mesh").replace(".ply", ".obj")
+            
+            sfm_pin_params = self._param_panel.get_sfm_pin_params()
+            params = self._param_panel.get_params()
+            
+            save_result_json(
+                output_path,
+                rgbd_pcd_file,
+                sfm_mesh_file,
+                self._current_result.transform_matrix,
+                rmse=self._current_result.rmse,
+                open3d_rmse=self._current_result.open3d_rmse,
+                sfm_pin_data=self._current_result.sfm_pin_data,
+                rgbd_pin_data=self._current_result.rgbd_pin_data,
+                search_radius=params.search_radius,
+                cross_buffer=params.cross_buffer,
+                icp_iter_num=params.icp_iter_num,
+                icp_threshold=params.icp_threshold,
+                geometry_weight=params.geometry_weight,
+                hsv_weight=sfm_pin_params.hsv_weights,
+                peak_angles=self._current_result.peak_angles,
+                selected_peak_idx=self._current_result.selected_peak_idx,
+                manual_potential_indices=self._current_result.manual_potential_indices,
+            )
+
+            self._is_dirty = False
+            self._loader.get_completed_ids() # Refresh cache if needed?
+            self._file_tree.set_completed(self._current_pid, True)
+            self._status_bar.showMessage(f"Saved {self._current_pid}")
+            return True
+
+        except Exception as e:
+            logger.exception(f"Failed to save result for {self._current_pid}")
+            QMessageBox.critical(self, "Save Error", str(e))
             return False
 
     @Slot(str)
@@ -416,11 +640,47 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
         try:
+            # Check for existing result to determine which RGBD file to load
+            output_path = self._loader.get_output_path(pid)
+            rgbd_file_to_load = None
+            is_manual_rgbd = False
+            
+            if output_path.exists():
+                try:
+                    result_json = load_result_json(output_path)
+                    # Get persistent RGBD file path
+                    saved_rgbd_file = result_json.get("rgbd_pcd_file", "")
+                    if saved_rgbd_file:
+                        # Extract basename from relative path e.g. "1_rgbd/2_pcd/2025-015_pcd_365.ply" -> "2025-015_pcd_365.ply"
+                        rgbd_file_to_load = saved_rgbd_file.split("/")[-1]
+                        is_manual_rgbd = True # Assume if it's saved, we respect it as "manual" or "fixed"
+                except Exception as e:
+                    logger.warning(f"Could not read existing JSON for RGBD file: {e}")
+
             # Get current SfM pin params for loading
             sfm_params = self._param_panel.get_sfm_pin_params()
 
             # Load data
-            self._current_rgbd = self._loader.load_rgbd(pid, visualize=True)
+            # Use specific file if found in JSON, otherwise None (defaults to center)
+            self._current_rgbd = self._loader.load_rgbd(pid, img_id=rgbd_file_to_load, visualize=True)
+            
+            # Update File Tree Column
+            loaded_path = self._current_rgbd.get("pcd_rela_path", "")
+            loaded_filename = loaded_path.split("/")[-1]
+            
+            # Check if this differs from default to decide on "manual" indicator
+            defaults = self._loader.get_all_default_images()
+            default_filename = defaults.get(pid)
+            
+            # If loaded from JSON or manually selected, we check difference
+            # If checks pass, is_manual_rgbd becomes true only if different from default
+            if loaded_filename != default_filename:
+                is_manual_rgbd = True
+            else:
+                is_manual_rgbd = False
+                
+            self._file_tree.update_rgbd_file(pid, loaded_filename, is_manual=is_manual_rgbd)
+
             self._current_sfm = self._loader.load_sfm(
                 pid,
                 visualize=True,
@@ -431,6 +691,7 @@ class MainWindow(QMainWindow):
                 threshold_callback=self._on_threshold_update,
                 auto_iteration=sfm_params.auto_iteration,
             )
+
 
             logger.info("Loaded SfM data: {}", self._current_sfm)
             logger.info("Loaded RGBD data: {}", self._current_rgbd)

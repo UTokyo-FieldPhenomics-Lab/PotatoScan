@@ -409,16 +409,114 @@ class RgbdPinFetcher(object):
         #     'coco_file': '/path/to/coco.json'},
         #  '2R1-10': 
 
-    def get(self, potato_id, img_id=None, visualize=False, show=False):
-        logger.info(f"RgbdPinFetcher.get() called with potato_id={potato_id}")
+    def get_available_images(self, potato_id):
+        """
+        Get all available RGBD images for a potato ID.
         
+        Parameters
+        ----------
+        potato_id : str
+            Potato ID.
+            
+        Returns
+        -------
+        list
+            List of dicts containing image info (rgb, depth, etc.) sorted by position.
+        """
+        if potato_id not in self.img_names:
+            return []
+            
+        # Get all positions for this potato
+        positions = sorted(self.img_names[potato_id].keys())
+        
+        results = []
+        for pos in positions:
+            data = self.img_names[potato_id][pos]
+            # Add implicit pcd filename for easier matching later
+            rgb_rel_path = data['rgb']
+            # Use only basename for file listing to match UI expectations
+            pcd_filename = rgb_rel_path.split('/')[-1].replace('rgb', 'pcd').replace('.png', '.ply')
+                 
+            data_with_meta = data.copy()
+            data_with_meta['pos'] = pos
+            data_with_meta['pcd_filename'] = pcd_filename
+            results.append(data_with_meta)
+            
+        return results
+
+    def get_all_default_images(self) -> dict[str, str]:
+        """
+        Get the default (centered) PLY filename for all potato IDs.
+        
+        Returns
+        -------
+        dict[str, str]
+            Map of {potato_id: default_ply_filename}.
+        """
+        defaults = {}
+        for pid, data in self.centered_img.items():
+            if not data:
+                continue
+            rgb_rel_path = data.get('rgb', '')
+            if rgb_rel_path:
+                # Convert RGB png path to PCD ply path consistent with other logic
+                # e.g. "1_rgbd/1_image/..." but here 'rgb' is usually relative to dataset root or image folder?
+                # Data in centered_img comes from parse_img_infos.
+                # It usually looks like "2R1-1/2R1-1_rgb_358.png" (relative to image folder).
+                # We want just the filename usually for UI.
+                pcd_filename = rgb_rel_path.split('/')[-1].replace('rgb', 'pcd').replace('.png', '.ply')
+                defaults[pid] = pcd_filename
+        return defaults
+
+    def get(self, potato_id, img_id=None, visualize=False, show=False):
+        logger.info(f"RgbdPinFetcher.get() called with potato_id={potato_id}, img_id={img_id}")
+        
+        picked_img_data = None
+        
+        # Case 1: img_id is None -> use default centered image
         if img_id is None:
-            centered_data = self.centered_img[potato_id]
+            picked_img_data = self.centered_img[potato_id]
+        
+        # Case 2: img_id is a specific PLY filename (new feature)
+        elif isinstance(img_id, str) and img_id.endswith('.ply'):
+            # Find the image data that matches this PLY filename
+            target_ply = img_id
+            found = False
+            
+            # Helper to extract basename from path
+            def get_basename(path):
+                return path.split('/')[-1]
+            
+            target_basename = get_basename(target_ply)
+            
+            if potato_id in self.img_names:
+                for pos, data in self.img_names[potato_id].items():
+                    rgb_file = data['rgb']
+                    # Construct what the ply filename would be
+                    current_ply = get_basename(rgb_file).replace('rgb', 'pcd').replace('.png', '.ply')
+                    
+                    if current_ply == target_basename:
+                        picked_img_data = data
+                        found = True
+                        logger.info(f"Found match for {target_ply} at pos {pos}")
+                        break
+            
+            if not found:
+                logger.warning(f"Could not find match for {target_ply}, falling back to center")
+                picked_img_data = self.centered_img[potato_id]
+                
+        # Case 3: img_id is a position index (legacy/debug)
         else:
-            centered_data = self.img_names[potato_id][int(img_id)]
+            try:
+                pos_idx = int(img_id)
+                picked_img_data = self.img_names[potato_id][pos_idx]
+            except (ValueError, KeyError):
+                logger.warning(f"Invalid img_id {img_id}, falling back to center")
+                picked_img_data = self.centered_img[potato_id]
+
         
         # Get the correct PinRegions object for this potato's COCO file
-        coco_file = centered_data.get('coco_file')
+        coco_file = picked_img_data.get('coco_file')
         if coco_file and coco_file in self._pr_objects:
             pr = self._pr_objects[coco_file]
             logger.debug(f"Using COCO file: {coco_file} for {potato_id}")
@@ -426,7 +524,7 @@ class RgbdPinFetcher(object):
             pr = self.pr
             logger.warning(f"No COCO file mapping for {potato_id}, using default")
         
-        picked_img = {potato_id: centered_data}
+        picked_img = {potato_id: picked_img_data}
         pcd, pin_pcd, pcd_ero, pcd_rela_path = self.get_pcd_pin(pr, picked_img, potato_id)
 
         pcd_xyz = np.asarray(pcd.points)

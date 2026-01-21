@@ -45,6 +45,7 @@ class FileTreeWidget(QWidget):
 
     item_selected = Signal(str)
     item_double_clicked = Signal(str)
+    change_rgbd_requested = Signal(str)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         """Initialize the file tree widget."""
@@ -59,17 +60,20 @@ class FileTreeWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._tree = QTreeWidget()
-        self._tree.setHeaderLabels(["Status", "ID", "Pin Color"])
-        self._tree.setColumnCount(3)
+        self._tree.setHeaderLabels(["Status", "ID", "Pin Color", "RGBD File"])
+        self._tree.setColumnCount(4)
         self._tree.setRootIsDecorated(False)
         self._tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self._tree.setAlternatingRowColors(True)
+        self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_context_menu)
 
         # Column widths
         header = self._tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Interactive)
-        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Interactive)
+        # header.setSectionResizeMode(3, QHeaderView.Stretch)
 
         # Connect signals
         self._tree.itemSelectionChanged.connect(self._on_selection_changed)
@@ -82,6 +86,7 @@ class FileTreeWidget(QWidget):
         ids: list[str],
         completed: Optional[list[str]] = None,
         pin_colors: Optional[dict[str, str]] = None,
+        saved_rgbd_files: Optional[dict[str, str]] = None,
     ) -> None:
         """
         Set the list of potato IDs.
@@ -94,6 +99,8 @@ class FileTreeWidget(QWidget):
             List of completed (aligned) IDs.
         pin_colors : dict[str, str], optional
             Map of ID to pin color.
+        saved_rgbd_files : dict[str, str], optional
+            Map of ID to saved RGBD filename.
         """
         self._tree.clear()
         self._items.clear()
@@ -144,8 +151,60 @@ class FileTreeWidget(QWidget):
                     if qcol.isValid():
                         item.setForeground(2, QBrush(qcol))
 
+            # RGBD File Column
+            if saved_rgbd_files and pid in saved_rgbd_files:
+                fname = saved_rgbd_files[pid]
+                item.setText(3, fname)
+
             self._tree.addTopLevelItem(item)
             self._items[pid] = item
+
+    def update_rgbd_file(self, pid: str, filename: str, is_manual: bool = False) -> None:
+        """
+        Update the RGBD file column for a specific ID.
+        
+        Parameters
+        ----------
+        pid : str
+            Potato ID.
+        filename : str
+            Filename of the RGBD point cloud.
+        is_manual : bool
+            Whether this was manually selected.
+        """
+        if pid not in self._items:
+            return
+            
+        item = self._items[pid]
+        text = filename
+        if is_manual:
+            text += " (✋)"
+            # Highlight manual selection
+            item.setForeground(3, QBrush(QColor("#E65100"))) # Orange-ish
+        else:
+            # Default color
+            item.setForeground(3, QBrush(Qt.black)) # Or default theme color
+            
+        item.setText(3, text)
+        
+    @Slot(object)
+    def _on_context_menu(self, position) -> None:
+        """Handle context menu event."""
+        item = self._tree.itemAt(position)
+        if not item:
+            return
+            
+        pid = item.data(1, Qt.UserRole)
+        if not pid:
+            return
+            
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        
+        change_action = menu.addAction("Change RGBD Point Cloud")
+        change_action.triggered.connect(lambda: self.change_rgbd_requested.emit(pid))
+        
+        menu.exec_(self._tree.viewport().mapToGlobal(position))
 
     def set_completed(self, pid: str, completed: bool = True) -> None:
         """

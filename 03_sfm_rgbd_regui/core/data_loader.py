@@ -156,6 +156,67 @@ class DataLoader:
         self._init_fetchers()
         return self._sfm_fetcher.get_all_pin_colors()
 
+    def get_saved_metadata(self) -> dict[str, dict]:
+        """
+        Get metadata for all saved results.
+
+        Returns
+        -------
+        dict[str, dict]
+            Map of {pid: {'rgbd_filename': str, ...}}.
+        """
+        import json
+        metadata = {}
+        if not self.config.output_folder.exists():
+            return metadata
+
+        for json_file in self.config.output_folder.glob("*.json"):
+            try:
+                with open(json_file, 'r') as f:
+                    data = json.load(f)
+                
+                pid = json_file.stem
+                rgbd_file = data.get('rgbd_pcd_file', '')
+                filename = ""
+                if rgbd_file:
+                    filename = rgbd_file.split('/')[-1]
+                
+                metadata[pid] = {
+                    'rgbd_filename': filename,
+                }
+            except Exception:
+                pass
+        return metadata
+
+    def get_available_rgbd_files(self, pid: str) -> list[dict]:
+        """
+        Get list of available RGBD files for a potato ID.
+
+        Parameters
+        ----------
+        pid : str
+            Potato ID.
+
+        Returns
+        -------
+        list[dict]
+            List of dictionaries with 'pcd_filename', 'rgb', etc.
+        """
+        self._init_fetchers()
+        return self._rgbd_fetcher.get_available_images(pid)
+
+    def get_all_default_images(self) -> dict[str, str]:
+        """
+        Get map of ID to default RGBD filename.
+
+        Returns
+        -------
+        dict[str, str]
+            Map of {pid: default_filename}.
+        """
+        self._init_fetchers()
+        return self._rgbd_fetcher.get_all_default_images()
+
     def load_rgbd(
         self,
         pid: str,
