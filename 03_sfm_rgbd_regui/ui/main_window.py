@@ -593,6 +593,7 @@ class MainWindow(QMainWindow):
             )
 
         except Exception as e:
+            logger.exception(f"Failed to load {pid}")
             QMessageBox.critical(self, "Error", f"Failed to load {pid}:\n{e}")
             self._status_bar.showMessage(f"Error loading {pid}")
 

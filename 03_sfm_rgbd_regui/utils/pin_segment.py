@@ -437,11 +437,12 @@ class RgbdPinFetcher(object):
         # get the index of pin
         pin_idx = []
         for p in pin_pcd_xyz:
-            distance = pcd_xyz - p
-            distance = distance.sum(axis=1)
-            idx_temp = np.where(distance == 0)[0]
+            # Calculate distance (sum of absolute differences to avoid cancellation)
+            distance = np.abs(pcd_xyz - p).sum(axis=1)
+            # Use small epsilon for float comparison logic
+            idx_temp = np.where(distance < 1e-4)[0]
 
-            if idx_temp:
+            if idx_temp.size > 0:
                 pin_idx.append(idx_temp[0])
 
         logger.debug(f"RGBD: found {len(pin_idx)} pin indices")
