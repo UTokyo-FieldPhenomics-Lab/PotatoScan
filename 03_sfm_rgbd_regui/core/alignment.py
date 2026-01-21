@@ -175,6 +175,8 @@ class Aligner:
         self,
         rgbd_data: dict,
         sfm_data: dict,
+        invert_sfm: bool = False,
+        invert_rgbd: bool = False,
     ) -> tuple[dict, dict]:
         """
         Find pin center and normal vector for both point clouds.
@@ -185,6 +187,10 @@ class Aligner:
             RGBD data from DataLoader.load_rgbd().
         sfm_data : dict
             SfM data from DataLoader.load_sfm().
+        invert_sfm : bool
+            Whether to invert the SfM pin vector.
+        invert_rgbd : bool
+            Whether to invert the RGBD pin vector.
 
         Returns
         -------
@@ -202,6 +208,14 @@ class Aligner:
             show=False,
             label="sfm",
         )
+        if invert_sfm:
+            sfm_pin_data["vector"] = -np.array(sfm_pin_data["vector"])
+            sfm_pin_data["vector_arrow"] = util_pc.create_vector_arrow(
+                sfm_pin_data["circle_center_3d"], sfm_pin_data["vector"], zoom=0.01, color=[0, 0, 0]
+            )
+            sfm_pin_data["normal_vector_invert"] = True
+            logger.info("Inverted SfM pin vector")
+
         rgbd_pin_data = util_pc.find_pin_center(
             rgbd_data["pin_pcd"],
             rgbd_data["pcd"],
@@ -210,6 +224,13 @@ class Aligner:
             show=False,
             label="rgbd",
         )
+        if invert_rgbd:
+            rgbd_pin_data["vector"] = -np.array(rgbd_pin_data["vector"])
+            rgbd_pin_data["vector_arrow"] = util_pc.create_vector_arrow(
+                rgbd_pin_data["circle_center_3d"], rgbd_pin_data["vector"], zoom=0.01, color=[0, 0, 0]
+            )
+            rgbd_pin_data["normal_vector_invert"] = True
+            logger.info("Inverted RGBD pin vector")
         
         logger.debug(f"Pin Detection Complete for SfM and RGBD")
 
@@ -400,6 +421,8 @@ class Aligner:
         rgbd_data: dict,
         sfm_data: dict,
         selected_peak: Optional[int] = None,
+        invert_sfm: bool = False,
+        invert_rgbd: bool = False,
     ) -> AlignmentResult:
         """
         Compute full alignment pipeline.
@@ -412,6 +435,10 @@ class Aligner:
             SfM data from DataLoader.load_sfm().
         selected_peak : int
             Index of selected peak in local minima.
+        invert_sfm : bool
+            Invert SfM vector.
+        invert_rgbd : bool
+            Invert RGBD vector.
 
         Returns
         -------
@@ -419,7 +446,9 @@ class Aligner:
             Complete alignment result with matrix and metadata.
         """
         # Step 1: Find pin centers
-        sfm_pin_data, rgbd_pin_data = self.find_pin_centers(rgbd_data, sfm_data)
+        sfm_pin_data, rgbd_pin_data = self.find_pin_centers(
+            rgbd_data, sfm_data, invert_sfm=invert_sfm, invert_rgbd=invert_rgbd
+        )
 
         # Step 2: Rough alignment
         imatrix = self.compute_rough_alignment(rgbd_pin_data, sfm_pin_data)

@@ -82,6 +82,8 @@ class MainWindow(QMainWindow):
         self._is_dirty: bool = False
         self._manual_specified_angles: list[int] = []  # Manual rotation angles
         self._current_selected_angle: Optional[int] = None  # Track actively selected angle
+        self._invert_sfm_vector: bool = False
+        self._invert_rgbd_vector: bool = False
         self._settings = QSettings("PotatoScan", "RegistrationGUI")
 
         self._setup_ui()
@@ -240,6 +242,22 @@ class MainWindow(QMainWindow):
         reset_angles_action = QAction("&Reset Manual Angles", self)
         reset_angles_action.triggered.connect(self._on_reset_manual_angles)
         rotation_menu.addAction(reset_angles_action)
+
+        edit_menu.addSeparator()
+
+        # Pin Vector submenu
+        pin_vector_menu = QMenu("&Pin Vector", self)
+        edit_menu.addMenu(pin_vector_menu)
+
+        self._action_invert_sfm = QAction("Invert SfM Vector", self)
+        self._action_invert_sfm.setCheckable(True)
+        self._action_invert_sfm.triggered.connect(self._on_invert_sfm_vector)
+        pin_vector_menu.addAction(self._action_invert_sfm)
+
+        self._action_invert_rgbd = QAction("Invert RGBD Vector", self)
+        self._action_invert_rgbd.setCheckable(True)
+        self._action_invert_rgbd.triggered.connect(self._on_invert_rgbd_vector)
+        pin_vector_menu.addAction(self._action_invert_rgbd)
 
         edit_menu.addSeparator()
 
@@ -554,6 +572,30 @@ class MainWindow(QMainWindow):
             return
         self._on_change_rgbd_cloud_requested(self._current_pid)
 
+    @Slot()
+    def _on_invert_sfm_vector(self) -> None:
+        """Handle Invert SfM Vector action."""
+        if not self._current_pid:
+             # Revert check state if no items selected
+            self._action_invert_sfm.setChecked(False)
+            return
+            
+        self._invert_sfm_vector = self._action_invert_sfm.isChecked()
+        logger.info(f"User toggled SfM vector inversion: {self._invert_sfm_vector}")
+        self._run_alignment(selected_peak_angle=self._current_selected_angle, is_dirty=True)
+
+    @Slot()
+    def _on_invert_rgbd_vector(self) -> None:
+        """Handle Invert RGBD Vector action."""
+        if not self._current_pid:
+            # Revert check state if no items selected
+            self._action_invert_rgbd.setChecked(False)
+            return
+
+        self._invert_rgbd_vector = self._action_invert_rgbd.isChecked()
+        logger.info(f"User toggled RGBD vector inversion: {self._invert_rgbd_vector}")
+        self._run_alignment(selected_peak_angle=self._current_selected_angle, is_dirty=True)
+
     def _save_result(self) -> bool:
         """
         Save the current alignment result to JSON.
@@ -628,6 +670,12 @@ class MainWindow(QMainWindow):
         self._current_pid = pid
         self._manual_specified_angles = []  # Clear manual angles for new item
         self._current_selected_angle = None  # Reset selected angle
+        
+        # Reset inversion flags
+        self._invert_sfm_vector = False
+        self._invert_rgbd_vector = False
+        self._action_invert_sfm.setChecked(False)
+        self._action_invert_rgbd.setChecked(False)
 
         # Reset ALL Steps (2, 3, 4) for new item
         self._param_panel.reset_all_steps()
@@ -645,6 +693,10 @@ class MainWindow(QMainWindow):
             rgbd_file_to_load = None
             is_manual_rgbd = False
             
+            # Temporary store for loaded inversion flags if JSON exists
+            loaded_invert_sfm = False
+            loaded_invert_rgbd = False
+            
             if output_path.exists():
                 try:
                     result_json = load_result_json(output_path)
@@ -654,8 +706,36 @@ class MainWindow(QMainWindow):
                         # Extract basename from relative path e.g. "1_rgbd/2_pcd/2025-015_pcd_365.ply" -> "2025-015_pcd_365.ply"
                         rgbd_file_to_load = saved_rgbd_file.split("/")[-1]
                         is_manual_rgbd = True # Assume if it's saved, we respect it as "manual" or "fixed"
+                    
+                    # Check for inversion flags in metadata
+                    meta = result_json.get("meta", {})
+                    pin_seg = meta.get("pin_segment", {})
+                    
+                    # Check SfM
+                    sfm_meta = pin_seg.get("sfm", {})
+                    # Load "true" string or boolean True
+                    sfm_val = sfm_meta.get("normal_vector_invert", False)
+                    if isinstance(sfm_val, str) and sfm_val.lower() == "true":
+                        loaded_invert_sfm = True
+                    elif isinstance(sfm_val, bool) and sfm_val:
+                        loaded_invert_sfm = True
+                        
+                    # Check RGBD
+                    rgbd_meta = pin_seg.get("rgbd", {})
+                    rgbd_val = rgbd_meta.get("normal_vector_invert", False)
+                    if isinstance(rgbd_val, str) and rgbd_val.lower() == "true":
+                        loaded_invert_rgbd = True
+                    elif isinstance(rgbd_val, bool) and rgbd_val:
+                        loaded_invert_rgbd = True
+                        
                 except Exception as e:
-                    logger.warning(f"Could not read existing JSON for RGBD file: {e}")
+                    logger.warning(f"Could not read existing JSON for RGBD file or flags: {e}")
+
+            # Apply loaded flags
+            self._invert_sfm_vector = loaded_invert_sfm
+            self._invert_rgbd_vector = loaded_invert_rgbd
+            self._action_invert_sfm.setChecked(loaded_invert_sfm)
+            self._action_invert_rgbd.setChecked(loaded_invert_rgbd)
 
             # Get current SfM pin params for loading
             sfm_params = self._param_panel.get_sfm_pin_params()
@@ -893,6 +973,8 @@ class MainWindow(QMainWindow):
                 self._current_rgbd,
                 self._current_sfm,
                 selected_peak=None,  # Auto-select best initially
+                invert_sfm=self._invert_sfm_vector,
+                invert_rgbd=self._invert_rgbd_vector,
             )
             
             # Default to auto-selected angle
@@ -938,6 +1020,22 @@ class MainWindow(QMainWindow):
 
             # Update views
             self._viewer.set_transform(self._current_result.transform_matrix)
+            
+            # Update Pin Detection View (Step 3) with potentially new vectors
+            pin_detect_data = {
+                # SfM Group
+                'sfm_pcd': self._current_sfm['pcd'],
+                'sfm_pin_pcd': self._current_sfm['pin_pcd'],
+                'sfm_disk': self._current_result.sfm_pin_data.get('circle_mesh'),
+                'sfm_arrow': self._current_result.sfm_pin_data.get('vector_arrow'),
+                
+                # RGBD Group
+                'rgbd_pcd': self._current_rgbd['pcd'],
+                'rgbd_pin_pcd': self._current_rgbd['pin_pcd'],
+                'rgbd_disk': self._current_result.rgbd_pin_data.get('circle_mesh'),
+                'rgbd_arrow': self._current_result.rgbd_pin_data.get('vector_arrow'),
+            }
+            self._viewer.set_pin_detection_data(pin_detect_data)
             
             # Update dirty state
             self._is_dirty = is_dirty

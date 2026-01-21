@@ -127,6 +127,26 @@ def save_result_json(
     if manual_potential_indices:
         rms_analysis["manual_potential"] = manual_potential_indices
 
+    # Construct pin segment metadata with conditional invert flag
+    sfm_meta = {
+        "hsv_weight": hsv_weight or [0.5, 0.1, 0.3],
+        "hsv_index_denoise_threshold": hsv_denoise_threshold or 0.2,
+        "hsv_index_denoised_volume": hsv_denoised_volume or 0.0,
+        "center": _get_center(sfm_pin_data),
+        "radius(m)": sfm_pin_data.get("circle_radius", 0.0),
+        "normal_vector": _get_vector(sfm_pin_data),
+    }
+    if sfm_pin_data.get("normal_vector_invert", False):
+        sfm_meta["normal_vector_invert"] = "true"
+
+    rgbd_meta = {
+        "center": _get_center(rgbd_pin_data),
+        "radius(m)": rgbd_pin_data.get("circle_radius", 0.0),
+        "normal_vector": _get_vector(rgbd_pin_data),
+    }
+    if rgbd_pin_data.get("normal_vector_invert", False):
+        rgbd_meta["normal_vector_invert"] = "true"
+
     result = {
         "rgbd_pcd_file": rgbd_pcd_file,
         "sfm_mesh_file": sfm_mesh_file,
@@ -135,19 +155,8 @@ def save_result_json(
         "open3d_inlier_rmse": open3d_rmse,
         "meta": {
             "pin_segment": {
-                "sfm": {
-                    "hsv_weight": hsv_weight or [0.5, 0.1, 0.3],
-                    "hsv_index_denoise_threshold": hsv_denoise_threshold or 0.2,
-                    "hsv_index_denoised_volume": hsv_denoised_volume or 0.0,
-                    "center": _get_center(sfm_pin_data),
-                    "radius(m)": sfm_pin_data.get("circle_radius", 0.0),
-                    "normal_vector": _get_vector(sfm_pin_data),
-                },
-                "rgbd": {
-                    "center": _get_center(rgbd_pin_data),
-                    "radius(m)": rgbd_pin_data.get("circle_radius", 0.0),
-                    "normal_vector": _get_vector(rgbd_pin_data),
-                },
+                "sfm": sfm_meta,
+                "rgbd": rgbd_meta,
             },
             "pin_neighbor": {
                 "search_radius(m)": search_radius,
